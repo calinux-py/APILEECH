@@ -1095,6 +1095,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('currentTabBtn').addEventListener('click', () => {
     currentView = 'current';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('currentTabBtn').classList.add('active');
     document.getElementById('historyTabBtn').classList.remove('active');
     document.getElementById('twitterTabBtn').classList.remove('active');
@@ -1126,6 +1127,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('historyTabBtn').addEventListener('click', () => {
     currentView = 'history';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('historyTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('twitterTabBtn').classList.remove('active');
@@ -1157,6 +1159,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('twitterTabBtn').addEventListener('click', () => {
     currentView = 'twitter';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('twitterTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1181,6 +1184,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('tiktokTabBtn').addEventListener('click', () => {
     currentView = 'tiktok';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('tiktokTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1207,6 +1211,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('soundcloudTabBtn').addEventListener('click', () => {
     currentView = 'soundcloud';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('soundcloudTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1233,6 +1238,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('discordTabBtn').addEventListener('click', () => {
     currentView = 'discord';
+    document.getElementById('discordToolbar').style.display = 'flex';
     document.getElementById('discordTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1257,8 +1263,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderRequests(currentRequests);
   });
 
+  document.getElementById('discordDownloadEverythingBtn').addEventListener('click', () => {
+    if (typeof downloadDiscordAsHtml === 'function') downloadDiscordAsHtml();
+  });
+
   document.getElementById('facebookTabBtn').addEventListener('click', () => {
     currentView = 'facebook';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('facebookTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1288,6 +1299,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('instagramTabBtn').addEventListener('click', () => {
     currentView = 'instagram';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('instagramTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1318,6 +1330,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('githubTabBtn').addEventListener('click', () => {
     currentView = 'github';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('githubTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
@@ -1346,6 +1359,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('pinterestTabBtn').addEventListener('click', () => {
     currentView = 'pinterest';
+    document.getElementById('discordToolbar').style.display = 'none';
     document.getElementById('pinterestTabBtn').classList.add('active');
     document.getElementById('currentTabBtn').classList.remove('active');
     document.getElementById('historyTabBtn').classList.remove('active');
