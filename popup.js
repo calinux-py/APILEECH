@@ -245,9 +245,11 @@ function generateCurl(request) {
   
   if (shellMode === 'ps') {
     return generateCurlPS(request, method);
-  } else {
+  }
+  if (shellMode === 'cmd') {
     return generateCurlCMD(request, method);
   }
+  return generateCurlBash(request, method);
 }
 
 function generateCurlPS(request, method) {
@@ -304,6 +306,36 @@ function generateCurlCMD(request, method) {
   const body = compactBody(request);
   if (body) {
     cmd += ` --data-raw "${escCmd(body)}"`;
+  }
+  
+  cmd += ` --compressed`;
+  return cmd;
+}
+
+function generateCurlBash(request, method) {
+  const esc = (str) => String(str).replace(/'/g, "'\\''");
+  
+  let cmd = `curl '${esc(request.url)}' -X ${method}`;
+  
+  if (request.headers) {
+    const headers = Array.isArray(request.headers)
+      ? request.headers
+      : Object.entries(request.headers).map(([name, value]) => ({ name, value }));
+    
+    headers.forEach(h => {
+      const name  = h.name  || h[0];
+      const value = h.value || h[1];
+      const skip  = ['host', 'connection', 'content-length', 'accept-encoding'];
+      if (String(value) === 'undefined' || String(value) === 'null' || !value) return;
+      if (skip.includes(name.toLowerCase())) return;
+      
+      cmd += ` -H '${esc(name)}: ${esc(value)}'`;
+    });
+  }
+
+  const body = compactBody(request);
+  if (body) {
+    cmd += ` --data-raw '${esc(body)}'`;
   }
   
   cmd += ` --compressed`;
@@ -891,16 +923,18 @@ function importHistoryFromFile() {
 
 function loadShellMode() {
   const saved = localStorage.getItem('shellMode');
-  if (saved === 'cmd' || saved === 'ps') shellMode = saved;
+  if (saved === 'cmd' || saved === 'ps' || saved === 'bash') shellMode = saved;
   updateShellToggle();
 }
 
 function updateShellToggle() {
   const psBtn = document.getElementById('shellPS');
   const cmdBtn = document.getElementById('shellCMD');
-  if (!psBtn || !cmdBtn) return;
+  const bashBtn = document.getElementById('shellBash');
+  if (!psBtn || !cmdBtn || !bashBtn) return;
   psBtn.classList.toggle('active', shellMode === 'ps');
   cmdBtn.classList.toggle('active', shellMode === 'cmd');
+  bashBtn.classList.toggle('active', shellMode === 'bash');
 }
 
 function switchShellMode(mode) {
@@ -1057,6 +1091,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('shellPS').addEventListener('click', () => switchShellMode('ps'));
   document.getElementById('shellCMD').addEventListener('click', () => switchShellMode('cmd'));
+  document.getElementById('shellBash').addEventListener('click', () => switchShellMode('bash'));
 
   document.getElementById('currentTabBtn').addEventListener('click', () => {
     currentView = 'current';
