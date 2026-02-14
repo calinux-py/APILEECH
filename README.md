@@ -105,8 +105,9 @@ Request detail modal: generated curl (PS/CMD), Copy, and full document/response 
 - **Manifest v3** – Uses a service worker background and declarative permissions.  
 - **No browser storage for history** – Captured requests live only in memory (and in any file you export). Theme and small settings still use Chrome storage. If you store requests in browser storage, you will have a bad time.
 - **Content script** – Runs at `document_start` on all frames so the injected script is there before most fetch/XHR calls.  
-- **GraphQL** – The popup can detect GraphQL requests and offer a combined-query view; the curl you copy is still per-request.
+- **GraphQL** – The popup can detect GraphQL requests and offer a combined-query view; the curl you copy is still per-request. I use this to piece together pieces of GraphQL to try to create the full picture. It works sometimes.
 
 ## License
 
 lmao
+
