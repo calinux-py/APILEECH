@@ -3,6 +3,7 @@
 Chrome extension that captures API requests (including request and response bodies) and gives you copy-paste curl commands. History is kept in memory and can be exported to or imported from a JSON file so it does not fill browser storage.
 
 ---
+![TikTok](poc/fEMbAN9UaA.png)
 
 ## How it works
 
@@ -107,4 +108,5 @@ Request detail modal: generated curl (PS/CMD), Copy, and full document/response 
 - **GraphQL** – The popup can detect GraphQL requests and offer a combined-query view; the curl you copy is still per-request.
 
 ## License
+
 lmao
