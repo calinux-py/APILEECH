@@ -30,6 +30,111 @@
     }
   }
 
+  var scannedScriptKeys = Object.create(null);
+  var MAX_INLINE_SCRIPT_CHARS = 250000;
+
+  function hashText(str) {
+    var input = String(str || '');
+    var hash = 2166136261;
+    for (var i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    }
+    return (hash >>> 0).toString(16);
+  }
+
+  function resolveScriptSrc(src) {
+    try { return new URL(src, window.location.href).href; } catch (e) { return String(src || ''); }
+  }
+
+  function queueScriptForEndpointScan(payload) {
+    if (!payload) return;
+    setTimeout(function() {
+      sendToBackground({ action: 'scanScriptForEndpoints', data: payload });
+    }, 0);
+  }
+
+  function markScriptKey(scriptKey) {
+    if (!scriptKey) return false;
+    if (scannedScriptKeys[scriptKey]) return false;
+    scannedScriptKeys[scriptKey] = true;
+    return true;
+  }
+
+  function scanSingleScriptNode(scriptEl) {
+    if (!scriptEl || scriptEl.tagName !== 'SCRIPT') return;
+    var srcAttr = scriptEl.getAttribute('src');
+    if (srcAttr) {
+      var resolvedSrc = resolveScriptSrc(srcAttr);
+      if (!resolvedSrc) return;
+      if (!/^https?:\/\//i.test(resolvedSrc)) return;
+      var srcKey = 'src:' + resolvedSrc;
+      if (!markScriptKey(srcKey)) return;
+      queueScriptForEndpointScan({
+        scriptKey: srcKey,
+        scriptUrl: resolvedSrc,
+        pageUrl: window.location.href,
+        sourceType: 'external'
+      });
+      return;
+    }
+
+    var inlineText = scriptEl.textContent || '';
+    if (!inlineText || !inlineText.trim()) return;
+    if (inlineText.length < 12) return;
+    var trimmed = inlineText.trim();
+    var inlineHash = hashText(trimmed);
+    var inlineKey = 'inline:' + inlineHash;
+    if (!markScriptKey(inlineKey)) return;
+    queueScriptForEndpointScan({
+      scriptKey: inlineKey,
+      scriptUrl: window.location.href + '#inline-' + inlineHash,
+      pageUrl: window.location.href,
+      sourceType: 'inline',
+      sourceText: trimmed.slice(0, MAX_INLINE_SCRIPT_CHARS)
+    });
+  }
+
+  function scanScriptsUnderNode(node) {
+    if (!node || !node.nodeType) return;
+    if (node.nodeType !== 1) return;
+    var el = node;
+    if (el.tagName === 'SCRIPT') {
+      scanSingleScriptNode(el);
+      return;
+    }
+    var scripts = el.querySelectorAll ? el.querySelectorAll('script') : [];
+    for (var i = 0; i < scripts.length; i++) {
+      scanSingleScriptNode(scripts[i]);
+    }
+  }
+
+  function scanExistingScripts() {
+    try {
+      var scripts = document.querySelectorAll('script');
+      for (var i = 0; i < scripts.length; i++) {
+        scanSingleScriptNode(scripts[i]);
+      }
+    } catch (e) {}
+  }
+
+  function watchForScriptChanges() {
+    try {
+      var target = document.documentElement || document;
+      if (!target || typeof MutationObserver === 'undefined') return;
+      var observer = new MutationObserver(function(mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var mutation = mutations[i];
+          if (!mutation.addedNodes || mutation.addedNodes.length === 0) continue;
+          for (var j = 0; j < mutation.addedNodes.length; j++) {
+            scanScriptsUnderNode(mutation.addedNodes[j]);
+          }
+        }
+      });
+      observer.observe(target, { childList: true, subtree: true });
+    } catch (e) {}
+  }
+
   try {
     var injectRt = getRuntime();
     if (!injectRt) return;
@@ -39,6 +144,16 @@
     (document.head || document.documentElement).appendChild(script);
   } catch (e) {
     return;
+  }
+
+  scanExistingScripts();
+  watchForScriptChanges();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      scanExistingScripts();
+    }, { once: true });
+  } else {
+    setTimeout(scanExistingScripts, 400);
   }
 
   window.addEventListener('message', function(event) {
