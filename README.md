@@ -1,6 +1,6 @@
 # APILEECH
 
-Chrome extension that captures API requests (including request and response bodies) and gives you copy-paste curl commands. It can **scrape content and messages** from sites (users, posts, comments, etc.) by parsing their API responses. History is kept in memory and can be exported to or imported from a JSON file so it does not fill browser storage.
+Chromium (Chrome, Edge, Opera, Brave, etc) extension that captures API requests (including request and response bodies) and gives you copy-paste curl commands. It can **scrape content and messages** from sites (users, posts, comments, etc.) by parsing their API responses. History is kept in memory and can be exported to or imported from a JSON file so it does not fill browser storage.
 
 ---
 ![Discord POC](poc/discordpoc.gif)
@@ -128,4 +128,5 @@ Actively intercept possible endpoints hidden in Javascript.
 ## License
 
 N/A
+
 
