@@ -108,9 +108,13 @@ Request detail modal: generated curl (PS/CMD), Copy, and full document/response 
 
 ![Request details and curl](poc/Vux7GtH0n7.png)
 
+Download TikTok videos, audio, and captions.
+
 ![TikTok](poc/fEMbAN9UaA.png)
 
-Download TikTok videos, audio, and captions.
+Actively intercept possible endpoints hidden in Javascript.
+
+![Active Interception](poc/2j3pl6cot3.png)
 
 ---
 
@@ -124,3 +128,4 @@ Download TikTok videos, audio, and captions.
 ## License
 
 N/A
+
