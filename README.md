@@ -62,14 +62,24 @@ After that, use any site as usual. Open the extension popup to see requests for 
 ## What to expect in the UI
 
 **Request list**  
-- “Current” tab: requests whose URL or initiator matches the active tab’s hostname.  
-- “History” tab: all captured requests, grouped by domain.  
+- **Current** tab: requests whose URL or initiator matches the active tab’s hostname.  
+- **History** tab: all captured requests, grouped by domain.  
+- **Active Interception** tab: endpoint candidates discovered by scanning the page’s JavaScript in real time (see below).  
 - Counts: “Current” = count for active tab, “Total” = length of the in-memory list.
 
+**Filtering**  
+- **Filter popup** (filter icon in the header): filter the request list by **method** (GET, POST, etc.) and **type** (Fetch vs Document).  
+- **Hide static resources**: when enabled (default), requests that look like static assets are hidden from the list. That includes: scripts (`.js`, `.mjs`, `.ts`, etc.), styles (`.css`, `.scss`), images, fonts, common CDN domains (e.g. jsdelivr, unpkg, cdnjs), and framework-style paths (e.g. `chunk`, `vendor`, `bundle`). This setting is saved and applies to both Current and History. Toggle it in the filter popup.
+
 **Request detail**  
-- cURL command with PS or CMD formatting and a Copy button.  
+- cURL command with PS, CMD, or Bash formatting and a Copy button.  
 - Request headers and body.  
 - Response body (or document contents for main-frame navigations).
+
+**Active Interception**  
+- The extension continuously scans **all JavaScript** loaded by the page (including inline and dynamically added scripts) and looks for likely API/endpoint usage: `fetch()`, `axios.get/post/…`, `xhr.open()`, and quoted URLs that look like API paths.  
+- Each candidate is shown with **method**, **URL**, **confidence** (high / medium / low), source scripts, and a **single-line curl** with a shell toggle: **PS**, **CMD**, or **Bash**. Use the tabs to switch the visible command and Copy to paste into your terminal.  
+- High confidence = detected from a clear fetch/axios/xhr call; medium/low = from generic URL patterns. The list updates as new scripts load. Data is per-tab and cleared on navigation.
 
 **Export / Import**  
 - Export: download the current in-memory list as a JSON file (e.g. `requeststealer_history.json`). You choose the path (or use the default name).  
@@ -82,7 +92,7 @@ After that, use any site as usual. Open the extension popup to see requests for 
 
 ## POC
 
-Main popup with request list (current tab). Counts, search, filter, refresh, export, import, clear. Tabs for Current, History, and site-specific views.
+Main popup with request list (current tab). Counts, search, filter (including hide static resources), refresh, export, import, clear. Tabs for Current, History, Active Interception, and site-specific views.
 
 ![Request list and controls](poc/guyaxl6vJM.png)
 
@@ -113,11 +123,4 @@ Download TikTok videos, audio, and captions.
 
 ## License
 
-lmao
-
-
-
-
-
-
-
+N/A
