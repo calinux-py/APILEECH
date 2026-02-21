@@ -6,6 +6,7 @@ Chromium (Chrome, Edge, Opera, Brave, etc) extension that captures API requests 
 ![Discord POC](poc/discordpoc.gif)
 
 [Try APILEECH in Microsoft Edge Right Now!](https://microsoftedge.microsoft.com/addons/detail/apileech/cmbobajnibidgjppebnfcpleaifcenjk)
+[Try APILEECH for Chromium-based Browsers Right Now!](https://chromewebstore.google.com/detail/apileech/nmcppdbckijfleddncfidbcmenhcmjbh?authuser=0&hl=en)
 
 ## How it works
 
@@ -134,5 +135,6 @@ N/A
 ## Contributors
 
 - [@mojidoji](https://github.com/mojidoji) - Feature implementation
+
 
 
