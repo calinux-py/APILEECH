@@ -2,7 +2,8 @@
 function isPinterestDomain(host) {
   if (!host) return false;
   return host === 'pinterest.com' || host === 'www.pinterest.com' || host.endsWith('.pinterest.com');
-}function getPinterestImageSignature(url) {
+}
+function getPinterestImageSignature(url) {
   if (!url || typeof url !== 'string') return '';
   try {
     const path = new URL(url).pathname || '';
@@ -12,7 +13,8 @@ function isPinterestDomain(host) {
   } catch (_) {
     return url;
   }
-}function getPinterestImageSizePriority(url) {
+}
+function getPinterestImageSizePriority(url) {
   if (!url || typeof url !== 'string') return 0;
   try {
     const path = new URL(url).pathname || '';
@@ -24,7 +26,8 @@ function isPinterestDomain(host) {
   } catch (_) {
     return 0;
   }
-}function dedupePinterestImagesByLargest(images) {
+}
+function dedupePinterestImagesByLargest(images) {
   if (!Array.isArray(images) || images.length === 0) return images;
   const bySig = new Map();
   images.forEach(img => {
@@ -38,7 +41,8 @@ function isPinterestDomain(host) {
     }
   });
   return Array.from(bySig.values());
-}function getPinterestResourceData(responseBody) {
+}
+function getPinterestResourceData(responseBody) {
   try {
     const raw = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody);
     const root = JSON.parse(raw);
@@ -48,7 +52,8 @@ function isPinterestDomain(host) {
     const clientContext = root.client_context || rr.client_context || null;
     return data != null ? { data, clientContext } : null;
   } catch (_) { return null; }
-}function collectPinterestImageUrls(obj, out) {
+}
+function collectPinterestImageUrls(obj, out) {
   if (!obj || typeof obj !== 'object') return;
   if (Array.isArray(obj)) {
     obj.forEach(item => {
@@ -73,7 +78,8 @@ function isPinterestDomain(host) {
       }
     }
   });
-}function normalizePinterestPin(item) {
+}
+function normalizePinterestPin(item) {
   if (!item || typeof item !== 'object') return null;
   const id = item.id || '';
   const node_id = item.node_id || '';
@@ -101,7 +107,8 @@ function isPinterestDomain(host) {
     pinner, board, images: uniqueImages,
     type: item.type
   };
-}function normalizePinterestUser(u) {
+}
+function normalizePinterestUser(u) {
   if (!u || typeof u !== 'object') return null;
   const id = u.id != null ? String(u.id) : '';
   const node_id = u.node_id || '';
@@ -118,7 +125,8 @@ function isPinterestDomain(host) {
     recent_pin_images: u.recent_pin_images || {},
     is_default_image: !!u.is_default_image,
   };
-}function normalizePinterestConversation(item) {
+}
+function normalizePinterestConversation(item) {
   if (!item || typeof item !== 'object') return null;
   const node_id = item.node_id || '';
   const unread = item.unread != null ? item.unread : 0;
@@ -157,7 +165,8 @@ function aggregatePinterestFromRequests(requests) {
     const parsed = getPinterestResourceData(req.responseBody);
     if (!parsed || !Array.isArray(parsed.data)) return;
 
-    parsed.data.forEach(item => {      if ((item.type === 'pin' || item.images) && !item.is_promoted) {
+    parsed.data.forEach(item => {
+      if ((item.type === 'pin' || item.images) && !item.is_promoted) {
         const pin = normalizePinterestPin(item);
         if (pin && pin.images.length > 0) {
           pins.push(pin);
@@ -165,26 +174,33 @@ function aggregatePinterestFromRequests(requests) {
           if (pin.board && pin.board.owner && pin.board.owner.id) usersById.set(pin.board.owner.id, pin.board.owner);
           pin.images.forEach(img => allImages.push(img));
         }
-      }      if (item.type === 'conversation' || (item.last_message && item.users)) {
+      }
+      if (item.type === 'conversation' || (item.last_message && item.users)) {
         const conv = normalizePinterestConversation(item);
         if (conv) {
           const sender = conv.last_message && conv.last_message.sender;
           const senderName = sender ? (sender.full_name || sender.username || 'Unknown') : 'Unknown';
           const images = [];
           collectPinterestImageUrls(item, images);
-          const hasContent = conv.last_message.text || conv.users.length > 0 || images.length > 0;          if (senderName === 'Unknown' && !hasContent) {          } else {
+          const hasContent = conv.last_message.text || conv.users.length > 0 || images.length > 0;
+          if (senderName === 'Unknown' && !hasContent) {
+          } else {
             conversations.push(conv);
             if (sender && sender.id) usersById.set(sender.id, sender);
             conv.users.forEach(u => { if (u && u.id) usersById.set(u.id, u); });
             images.forEach(img => allImages.push(img));
           }
         }
-      }      if (item.type === 'user') {
+      }
+      if (item.type === 'user') {
         const u = normalizePinterestUser(item);
         if (u && u.id) usersById.set(u.id, u);
-      }      collectPinterestImageUrls(item, allImages);
+      }
+      collectPinterestImageUrls(item, allImages);
     });
-  });  const dedupedImages = dedupePinterestImagesByLargest(allImages);  const uniqueConversations = [];
+  });
+  const dedupedImages = dedupePinterestImagesByLargest(allImages);
+  const uniqueConversations = [];
   const seenConv = new Set();
   conversations.forEach(c => {
     const key = c.node_id || c.id;
@@ -368,7 +384,8 @@ function renderPinterestTab(requests) {
     users.map(u => u.id + u.username).join(','),
     allImages.length,
   ].join(';');
-  if (signature === lastPinterestDataSignature) return;
+  const hasData = conversations.length || pins.length || users.length || allImages.length;
+  if (hasData && signature === lastPinterestDataSignature) return;
   lastPinterestDataSignature = signature;
 
   const onPinterest = isPinterestDomain(activeTabDomain);
@@ -385,7 +402,8 @@ function renderPinterestTab(requests) {
   }
 
   const emptySection = (msg) => `<div class="pinterest-empty-section">${escapeHtml(msg)}</div>`;
-  let sectionsHtml = '';  if (pins.length) {
+  let sectionsHtml = '';
+  if (pins.length) {
     sectionsHtml += buildPinterestDropdownSection(
       `Pins (${pins.length})`,
       `<ul class="pinterest-pin-list">${pins.map(p => buildPinterestPinHtml(p)).join('')}</ul>`,
@@ -393,7 +411,8 @@ function renderPinterestTab(requests) {
     );
   } else {
     sectionsHtml += buildPinterestDropdownSection('Pins', emptySection('No pins captured.'), false);
-  }  if (conversations.length) {
+  }
+  if (conversations.length) {
     sectionsHtml += buildPinterestDropdownSection(
       `Conversations (${conversations.length})`,
       `<ul class="pinterest-conversation-list">${conversations.map(c => buildPinterestConversationHtml(c)).join('')}</ul>`,
@@ -401,7 +420,8 @@ function renderPinterestTab(requests) {
     );
   } else {
     sectionsHtml += buildPinterestDropdownSection('Conversations', emptySection('No conversations captured.'), false);
-  }  if (users.length) {
+  }
+  if (users.length) {
     sectionsHtml += buildPinterestDropdownSection(
       `Users (${users.length})`,
       `<ul class="pinterest-user-list">${users.map(u => buildPinterestUserHtml(u)).join('')}</ul>`,
@@ -409,7 +429,8 @@ function renderPinterestTab(requests) {
     );
   } else {
     sectionsHtml += buildPinterestDropdownSection('Users', emptySection('No users captured.'), false);
-  }  if (allImages.length) {
+  }
+  if (allImages.length) {
     sectionsHtml += buildPinterestDropdownSection(
       `All Images (${allImages.length})`,
       buildPinterestImagesSection(allImages),
