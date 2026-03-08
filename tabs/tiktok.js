@@ -528,7 +528,8 @@ function renderTikTokTab(requests) {
     challenges.map(c => c.id).join(','),
     musicList.map(m => m.id).join(','),
   ].join(';');
-  if (signature === lastTikTokDataSignature) return;
+  const hasData = videos.length || authors.length || challenges.length || musicList.length;
+  if (hasData && signature === lastTikTokDataSignature) return;
   lastTikTokDataSignature = signature;
 
   const onTikTok = isTikTokDomain(activeTabDomain);
