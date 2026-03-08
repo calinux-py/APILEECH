@@ -573,11 +573,11 @@ function renderInstagramTab(requests) {
   const posts = aggregateInstagramFeedFromRequests(instagramRequests);
   const profiles = aggregateInstagramProfilesFromRequests(instagramRequests);
   const signature = posts.map(p => p.pk).sort().join(',') + '|' + profiles.map(p => p.pk).sort().join(',');
-  if (signature === lastInstagramDataSignature) return;
+  const hasAny = posts.length > 0 || profiles.length > 0;
+  if (hasAny && signature === lastInstagramDataSignature) return;
   lastInstagramDataSignature = signature;
 
   const onInstagram = isInstagramDomain(activeTabDomain);
-  const hasAny = posts.length > 0 || profiles.length > 0;
   if (!hasAny) {
     cleanupInstagramProfilePicBlobs();
     container.innerHTML = `
