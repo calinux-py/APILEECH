@@ -452,7 +452,9 @@ function formatTwitterUserDetailRow(label, value, opts) {
 
 function formatTwitterUserJsonBlock(label, jsonText) {
   if (!jsonText || String(jsonText).trim() === '') return '';
-  return `<details class="twitter-user-json-block"><summary>${escapeHtml(label)}</summary><pre class="twitter-user-json-pre">${escapeHtml(String(jsonText))}</pre></details>`;
+  const str = String(jsonText);
+  const highlighted = (typeof highlightJson === 'function') ? highlightJson(str) : escapeHtml(str);
+  return `<details class="twitter-user-json-block"><summary>${escapeHtml(label)}</summary><pre class="twitter-user-json-pre json-display"><code>${highlighted}</code></pre></details>`;
 }
 
 function twitterUserDetailRows(u) {
@@ -628,7 +630,8 @@ function renderTwitterTab(requests) {
     tweets.map(t => t.rest_id).join(','),
     timelineTweets.map(t => t.rest_id).join(','),
   ].join(';');
-  if (signature === lastTwitterDataSignature) return;
+  const hasData = profileUsers.length || sidebarUsers.length || tweets.length || timelineTweets.length;
+  if (hasData && signature === lastTwitterDataSignature) return;
   lastTwitterDataSignature = signature;
 
   const onTwitter = isTwitterDomain(activeTabDomain);
