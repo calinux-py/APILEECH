@@ -1,6 +1,6 @@
 # APILEECH
 
-Chromium (Chrome, Edge, Opera, Brave, etc) extension that captures API requests (including request and response bodies) and gives you copy-paste curl commands. It can **scrape content and messages** from sites (users, posts, comments, etc.) by parsing their API responses. History is kept in memory and can be exported to or imported from a JSON file so it does not fill browser storage.
+Chromium (Chrome, Edge, Opera, Brave, etc) extension that captures API requests (including request and response bodies) and gives you copy-paste curl commands. It can **scrape content and messages** from sites (users, posts, comments, etc.) by parsing their API responses. It also **scans page scripts** for API endpoints, database URLs, and cloud storage; **extracts comments** from HTML, JS, and CSS; and runs a **Bug Hunter** for security findings. History is kept in memory and can be exported to or imported from a JSON file so it does not fill browser storage.
 
 ---
 ![Discord POC](poc/discordpoc.gif)
@@ -69,12 +69,18 @@ After that, use any site as usual. Open the extension popup to see requests for 
 **Request list**  
 - **Current** tab: requests whose URL or initiator matches the active tab’s hostname.  
 - **History** tab: all captured requests, grouped by domain.  
-- **Active Interception** tab: endpoint candidates discovered by scanning the page’s JavaScript in real time (see below).  
+- **Active Interception** tab: endpoint candidates and Storage & DB URLs discovered by scanning the page’s JavaScript in real time (see below).  
+- **Comments** tab: HTML, JS, and CSS comments extracted from the page and its scripts.  
+- **Bug Hunter** tab: security findings from headers, cookies, response bodies, and page source.  
+- **Platform-specific tabs** (Twitter, TikTok, SoundCloud, Discord, Facebook, Instagram, GitHub, Pinterest): parsed content from captured API responses.  
 - Counts: “Current” = count for active tab, “Total” = length of the in-memory list.
 
 **Filtering**  
 - **Filter popup** (filter icon in the header): filter the request list by **method** (GET, POST, etc.) and **type** (Fetch vs Document).  
 - **Hide static resources**: when enabled (default), requests that look like static assets are hidden from the list. That includes: scripts (`.js`, `.mjs`, `.ts`, etc.), styles (`.css`, `.scss`), images, fonts, common CDN domains (e.g. jsdelivr, unpkg, cdnjs), and framework-style paths (e.g. `chunk`, `vendor`, `bundle`). This setting is saved and applies to both Current and History. Toggle it in the filter popup.
+
+**Refresh**  
+- The refresh button **reloads the current tab** (like F5) to capture a fresh set of requests. The popup waits for the page to finish loading before updating the list.
 
 **Request detail**  
 - cURL command with PS, CMD, or Bash formatting and a Copy button.  
@@ -83,21 +89,33 @@ After that, use any site as usual. Open the extension popup to see requests for 
 
 **Active Interception**  
 - The extension continuously scans **all JavaScript** loaded by the page (including inline and dynamically added scripts) and looks for likely API/endpoint usage: `fetch()`, `axios.get/post/…`, `xhr.open()`, and quoted URLs that look like API paths.  
-- Each candidate is shown with **method**, **URL**, **confidence** (high / medium / low), source scripts, and a **single-line curl** with a shell toggle: **PS**, **CMD**, or **Bash**. Use the tabs to switch the visible command and Copy to paste into your terminal.  
+- **Storage & DB** – A dedicated section finds database and cloud storage URLs in page scripts: Firebase (RTDB, Storage, Auth), Supabase, AWS (DynamoDB, S3), Azure (Cosmos DB, Blob), Google Cloud Storage, MongoDB, Turso, Upstash, and many more. Each match shows a code snippet with surrounding context instead of raw shell commands.  
+- **API endpoints** – Each candidate is shown with **method**, **URL**, **confidence** (high / medium / low), source scripts, and a **single-line curl** with a shell toggle: **PS**, **CMD**, or **Bash**. Use the tabs to switch the visible command and Copy to paste into your terminal.  
 - High confidence = detected from a clear fetch/axios/xhr call; medium/low = from generic URL patterns. The list updates as new scripts load. Data is per-tab and cleared on navigation.
+
+**Comments**  
+- The **Comments** tab scans the current page’s document and loaded scripts for **HTML**, **JavaScript**, and **CSS** comments. It shows each comment with file/source type, line number, syntax highlighting, and a code snippet of the surrounding context. Useful for finding TODOs, debug notes, and hidden hints in page source.
+
+**Bug Hunter**  
+- The **Bug Hunter** tab analyzes captured traffic and page content for security findings: missing security headers (CSP, HSTS, X-Frame-Options), CORS misconfigurations, cookie issues (missing Secure/HttpOnly), token exposure, stack traces, SQL errors, source map exposure, API tooling exposure (Swagger, GraphQL introspection), cloud metadata endpoints, mixed content, and more. Findings are ranked by severity (Critical, High, Medium, Low, Info) and include proof and reference links.
+
+**Settings**  
+- Click the **settings** (cog) icon to access:  
+  - **Theme** – Toggle between dark and light mode.  
+  - **Visible tabs** – Show or hide platform-specific tabs (Twitter, TikTok, SoundCloud, Discord, Facebook, Instagram, GitHub, Pinterest, Bug Hunter). Current, History, and Active Interception are always visible.
 
 **Export / Import**  
 - Export: download the current in-memory list as a JSON file (e.g. `requeststealer_history.json`). You choose the path (or use the default name).  
 - Import: pick a previously exported JSON file; it replaces the current in-memory list and the popup refreshes. Use this to restore a session or move history between machines.
 
 **Platform-specific tabs (Twitter, TikTok, etc.)**  
-- For some sites (e.g. Twitter/X), the extension parses known API responses and shows a structured view: users, tweets, timeline. That’s in addition to the raw request list; the same captured data is used to build those views.
+- For some sites (e.g. Twitter/X, Instagram, GitHub), the extension parses known API responses and shows a structured view: users, tweets, timeline, profiles, etc. That’s in addition to the raw request list; the same captured data is used to build those views. Visibility of these tabs can be toggled in Settings.
 
 ---
 
 ## POC
 
-Main popup with request list (current tab). Counts, search, filter (including hide static resources), refresh, export, import, clear. Tabs for Current, History, Active Interception, and site-specific views.
+Main popup with request list (current tab). Counts, search, filter (including hide static resources), refresh, export, import, clear, settings. Tabs for Current, History, Active Interception, Comments, Bug Hunter, and site-specific views.
 
 ![Request list and controls](poc/guyaxl6vJM.png)
 
@@ -137,6 +155,7 @@ N/A
 ## Contributors
 
 - [@mojidoji](https://github.com/mojidoji) - Feature implementation
+
 
 
 
