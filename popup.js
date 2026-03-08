@@ -1,11 +1,55 @@
 const STATIC_FILTER_STORAGE_KEY = 'hideStaticResources';
+const TAB_VISIBILITY_STORAGE_KEY = 'popupTabVisibility';
+const TAB_DEFINITIONS = [
+  { key: 'current', buttonId: 'currentTabBtn', view: 'current', label: 'Current tab', locked: true },
+  { key: 'history', buttonId: 'historyTabBtn', view: 'history', label: 'History', locked: true },
+  { key: 'comments', buttonId: 'commentsTabBtn', view: 'comments', label: 'Comments', locked: false },
+  { key: 'activeInterception', buttonId: 'activeInterceptionTabBtn', view: 'activeInterception', label: 'Active Interception', locked: false },
+  { key: 'bugs', buttonId: 'bugsTabBtn', view: 'bugs', label: 'Bug Hunter', locked: false },
+  { key: 'twitter', buttonId: 'twitterTabBtn', view: 'twitter', label: 'Twitter / X', locked: false },
+  { key: 'tiktok', buttonId: 'tiktokTabBtn', view: 'tiktok', label: 'TikTok', locked: false },
+  { key: 'soundcloud', buttonId: 'soundcloudTabBtn', view: 'soundcloud', label: 'SoundCloud', locked: false },
+  { key: 'discord', buttonId: 'discordTabBtn', view: 'discord', label: 'Discord', locked: false },
+  { key: 'facebook', buttonId: 'facebookTabBtn', view: 'facebook', label: 'Facebook', locked: false },
+  { key: 'instagram', buttonId: 'instagramTabBtn', view: 'instagram', label: 'Instagram', locked: false },
+  { key: 'github', buttonId: 'githubTabBtn', view: 'github', label: 'GitHub', locked: false },
+  { key: 'pinterest', buttonId: 'pinterestTabBtn', view: 'pinterest', label: 'Pinterest', locked: false }
+];
+const TAB_DEFINITION_BY_KEY = Object.fromEntries(TAB_DEFINITIONS.map(tab => [tab.key, tab]));
+const TAB_DEFINITION_BY_VIEW = Object.fromEntries(TAB_DEFINITIONS.map(tab => [tab.view, tab]));
 let hideStaticResources = true;
+
+function buildDefaultTabVisibilitySettings() {
+  const defaults = {};
+  TAB_DEFINITIONS.forEach(tab => {
+    defaults[tab.key] = true;
+  });
+  return defaults;
+}
+
+function normalizeTabVisibilitySettings(raw) {
+  const normalized = buildDefaultTabVisibilitySettings();
+  if (!raw || typeof raw !== 'object') return normalized;
+  TAB_DEFINITIONS.forEach(tab => {
+    if (tab.locked) {
+      normalized[tab.key] = true;
+      return;
+    }
+    if (typeof raw[tab.key] === 'boolean') {
+      normalized[tab.key] = raw[tab.key];
+    }
+  });
+  return normalized;
+}
+
+let tabVisibilitySettings = buildDefaultTabVisibilitySettings();
+let tabVisibilityUiReady = false;
 
 (function() {
   const theme = localStorage.getItem('theme') || 'dark';
   document.documentElement.setAttribute('data-theme', theme);
 
-  chrome.storage.local.get(['theme', 'shellMode', STATIC_FILTER_STORAGE_KEY], (result) => {
+  chrome.storage.local.get(['theme', 'shellMode', STATIC_FILTER_STORAGE_KEY, TAB_VISIBILITY_STORAGE_KEY], (result) => {
     if (result.theme && result.theme !== theme) {
       document.documentElement.setAttribute('data-theme', result.theme);
       localStorage.setItem('theme', result.theme);
@@ -22,7 +66,14 @@ let hideStaticResources = true;
       hideStaticResources = true;
       chrome.storage.local.set({ [STATIC_FILTER_STORAGE_KEY]: true });
     }
+    if (result[TAB_VISIBILITY_STORAGE_KEY]) {
+      tabVisibilitySettings = normalizeTabVisibilitySettings(result[TAB_VISIBILITY_STORAGE_KEY]);
+    } else {
+      tabVisibilitySettings = buildDefaultTabVisibilitySettings();
+      chrome.storage.local.set({ [TAB_VISIBILITY_STORAGE_KEY]: tabVisibilitySettings });
+    }
     chrome.runtime.sendMessage({ action: 'setHideStaticResources', enabled: hideStaticResources }, () => {});
+    syncTabVisibilityUi();
   });
 })();
 
@@ -36,6 +87,7 @@ let currentRequests = [];
 let combinedRequestsCache = [];
 let activeTabId = -1;
 let activeTabDomain = '';
+let activeTabUrl = '';
 let currentView = 'current';
 let modalList = [];
 let modalIndex = -1;
@@ -47,7 +99,9 @@ let facebookRefreshInterval = null;
 let instagramRefreshInterval = null;
 let githubRefreshInterval = null;
 let pinterestRefreshInterval = null;
+let commentsRefreshInterval = null;
 let activeInterceptionRefreshInterval = null;
+let currentHistoryRefreshInterval = null;
 let requestUrlSearchQuery = '';
 const requestFilterMethods = new Set();
 const requestFilterTypes = new Set();
@@ -61,7 +115,9 @@ const FACEBOOK_REFRESH_MS = 2000;
 const INSTAGRAM_REFRESH_MS = 2000;
 const GITHUB_REFRESH_MS = 2000;
 const PINTEREST_REFRESH_MS = 2000;
+const COMMENTS_REFRESH_MS = 2000;
 const ACTIVE_INTERCEPTION_REFRESH_MS = 2000;
+const CURRENT_HISTORY_REFRESH_MS = 1000;
 let lastTwitterDataSignature = '';
 let lastTikTokDataSignature = '';
 let lastSoundCloudDataSignature = '';
@@ -70,9 +126,166 @@ let lastFacebookDataSignature = '';
 let lastInstagramDataSignature = '';
 let lastGitHubDataSignature = '';
 let lastPinterestDataSignature = '';
+let lastCommentsDataSignature = '';
 let instagramProfilePicBlobUrls = new Set();
 let activeInterceptionEntries = [];
-let activeInterceptionStats = { scriptsScanned: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
+let activeInterceptionStats = { scriptsScanned: 0, storageDbCount: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
+let lastActiveInterceptionEntriesSignature = '';
+let pageCommentsData = { pageUrl: '', pageTitle: '', comments: [] };
+
+function isTabVisible(tabKey) {
+  const tab = TAB_DEFINITION_BY_KEY[tabKey];
+  if (!tab) return true;
+  if (tab.locked) return true;
+  return tabVisibilitySettings[tab.key] !== false;
+}
+
+function getPersistedTabVisibilitySettings() {
+  const persisted = {};
+  TAB_DEFINITIONS.forEach(tab => {
+    if (!tab.locked) {
+      persisted[tab.key] = isTabVisible(tab.key);
+    }
+  });
+  return persisted;
+}
+
+function getTabVisibilitySettingsMarkup() {
+  return TAB_DEFINITIONS.filter(tab => !tab.locked).map(tab => {
+    const button = document.getElementById(tab.buttonId);
+    const checked = isTabVisible(tab.key) ? ' checked' : '';
+    const disabled = tab.locked ? ' disabled' : '';
+    const lockedClass = tab.locked ? ' is-locked' : '';
+    const iconHtml = button ? button.innerHTML : '';
+    return `
+      <label class="settings-option${lockedClass}">
+        <span class="settings-option-main">
+          ${iconHtml}
+          <span class="settings-option-label">${escapeHtml(tab.label)}</span>
+        </span>
+        <input type="checkbox" data-tab-key="${tab.key}"${checked}${disabled}>
+      </label>
+    `;
+  }).join('');
+}
+
+function attachTabVisibilitySettingsHandlers(root = document) {
+  const listEl = root.querySelector('#tabVisibilityList');
+  if (!listEl) return;
+
+  listEl.querySelectorAll('input[data-tab-key]').forEach(input => {
+    input.addEventListener('change', () => {
+      const tab = TAB_DEFINITION_BY_KEY[input.dataset.tabKey];
+      if (!tab || tab.locked) return;
+      tabVisibilitySettings[tab.key] = input.checked;
+      chrome.storage.local.set({ [TAB_VISIBILITY_STORAGE_KEY]: getPersistedTabVisibilitySettings() });
+      applyTabVisibilitySettings();
+    });
+  });
+}
+
+function applyTabVisibilitySettings() {
+  TAB_DEFINITIONS.forEach(tab => {
+    const button = document.getElementById(tab.buttonId);
+    if (button) button.hidden = !isTabVisible(tab.key);
+  });
+
+  const activeTab = TAB_DEFINITION_BY_VIEW[currentView];
+  if (activeTab && !isTabVisible(activeTab.key)) {
+    const currentTabButton = document.getElementById('currentTabBtn');
+    if (currentTabButton) currentTabButton.click();
+  }
+}
+
+function syncTabVisibilityUi() {
+  if (!tabVisibilityUiReady) return;
+  applyTabVisibilitySettings();
+  if (currentView === 'settings') renderSettingsView();
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  chrome.storage.local.set({ theme: next });
+  if (currentView === 'settings') {
+    renderSettingsView();
+  } else {
+    updateThemeIcon();
+  }
+}
+
+function stopAllViewRefreshes() {
+  stopTwitterRefresh();
+  stopTikTokRefresh();
+  stopSoundCloudRefresh();
+  stopDiscordRefresh();
+  stopFacebookRefresh();
+  stopInstagramRefresh();
+  stopGitHubRefresh();
+  stopPinterestRefresh();
+  stopCommentsRefresh();
+  stopActiveInterceptionRefresh();
+  if (typeof stopBugRefresh === 'function') stopBugRefresh();
+  stopCurrentHistoryRefresh();
+}
+
+function resetAllPlatformDataSignatures() {
+  lastTwitterDataSignature = '';
+  lastTikTokDataSignature = '';
+  lastSoundCloudDataSignature = '';
+  lastDiscordDataSignature = '';
+  lastFacebookDataSignature = '';
+  lastInstagramDataSignature = '';
+  lastGitHubDataSignature = '';
+  lastPinterestDataSignature = '';
+  lastCommentsDataSignature = '';
+}
+
+function renderSettingsView() {
+  const container = document.getElementById('requestsContainer');
+  if (!container) return;
+
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const themeModeLabel = theme === 'dark' ? 'Dark mode' : 'Light mode';
+  const themeSwitchLabel = theme === 'dark' ? 'Switch to Light' : 'Switch to Dark';
+
+  container.innerHTML = `
+    <div class="settings-page">
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-title">Appearance</div>
+          <div class="settings-card-note">Theme controls moved here from the header.</div>
+        </div>
+        <div class="settings-card-body">
+          <button class="settings-theme-btn" id="settingsThemeToggle">
+            <span class="settings-theme-main">
+              <span class="settings-theme-icon" id="themeIcon">&#9728;</span>
+              <span class="settings-theme-copy">
+                <span class="settings-row-title">${themeModeLabel}</span>
+                <span class="settings-row-subtitle">Choose how the popup is displayed.</span>
+              </span>
+            </span>
+            <span class="settings-theme-value">${themeSwitchLabel}</span>
+          </button>
+        </div>
+      </div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div class="settings-card-title">Visible Tabs</div>
+        </div>
+        <div class="settings-card-body">
+          <div class="settings-list" id="tabVisibilityList">${getTabVisibilitySettingsMarkup()}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  attachTabVisibilitySettingsHandlers(container);
+  document.getElementById('settingsThemeToggle')?.addEventListener('click', toggleTheme);
+  updateThemeIcon();
+}
 
 function isGraphQLRequest(request) {
   if (!request.body || request.method !== 'POST') return false;
@@ -454,7 +667,24 @@ function renderRequests(requests) {
   const container = document.getElementById('requestsContainer');
   updateStats(requests);
 
-  if (requests.length === 0) {
+  if (currentView === 'comments') {
+    renderCommentsTabEnhanced();
+    return;
+  }
+  if (currentView === 'activeInterception') {
+    renderActiveInterceptionTab();
+    return;
+  }
+  if (currentView === 'bugs') {
+    if (typeof renderBugTab === 'function') renderBugTab();
+    return;
+  }
+  if (currentView === 'settings') {
+    renderSettingsView();
+    return;
+  }
+
+  if (requests.length === 0 && (currentView === 'current' || currentView === 'history')) {
     container.innerHTML = '<div class="empty-state"><div class="empty-text">Waiting for API requests...<br>Navigate any website to capture traffic</div></div>';
     return;
   }
@@ -463,8 +693,6 @@ function renderRequests(requests) {
     renderCurrentTab(requests);
   } else if (currentView === 'twitter') {
     renderTwitterTab(requests);
-  } else if (currentView === 'activeInterception') {
-    renderActiveInterceptionTab();
   } else if (currentView === 'tiktok') {
     renderTikTokTab(requests);
   } else if (currentView === 'soundcloud') {
@@ -489,6 +717,539 @@ function escapeHtml(s) {
   const div = document.createElement('div');
   div.textContent = s;
   return div.innerHTML;
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(String(value == null ? '' : value)).replace(/"/g, '&quot;');
+}
+
+function getCodeLanguage(comment) {
+  const st = (comment && comment.sourceType) || '';
+  const url = (comment && comment.fileUrl) || '';
+  if (/html/i.test(st)) return 'html';
+  if (/style/i.test(st) || /\.css$/i.test(url)) return 'css';
+  if (/script/i.test(st) || /\.(js|ts|mjs|cjs|jsx|tsx)$/i.test(url)) return 'javascript';
+  return 'javascript';
+}
+
+function highlightCode(code, lang) {
+  if (!code) return '';
+  const ranges = [];
+  const add = (re, cls) => {
+    let m;
+    const copy = new RegExp(re.source, re.flags);
+    while ((m = copy.exec(code)) !== null) {
+      ranges.push({ start: m.index, end: m.index + m[0].length, cls, text: m[0] });
+    }
+  };
+  add(/(^\s*\d+\s*\|\s*)/gm, 'hl-line');
+  add(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, 'hl-string');
+  add(/\/\*[\s\S]*?\*\//g, 'hl-comment');
+  add(/\/\/[^\n]*/g, 'hl-comment');
+  add(/<!--[\s\S]*?-->/g, 'hl-comment');
+  add(/\b(var|let|const|function|return|if|else|for|while|do|switch|case|break|continue|try|catch|throw|new|typeof|instanceof|in|of|async|await|class|extends|import|export|from|default)\b/g, 'hl-keyword');
+  add(/\b(true|false|null|undefined)\b/g, 'hl-literal');
+  add(/\b(\d+\.?\d*)\b/g, 'hl-number');
+  if (lang === 'html') {
+    add(/<\/?[\w-]+/g, 'hl-tag');
+    add(/[\w-]+(?=\s*=)/g, 'hl-attr');
+  }
+  ranges.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const r of ranges) {
+    if (merged.length && r.start < merged[merged.length - 1].end) continue;
+    merged.push(r);
+  }
+  let out = '';
+  let pos = 0;
+  for (const r of merged) {
+    out += escapeHtml(code.slice(pos, r.start));
+    out += `<span class="${r.cls}">${escapeHtml(r.text)}</span>`;
+    pos = r.end;
+  }
+  out += escapeHtml(code.slice(pos));
+  return out;
+}
+
+function stripJsonXssiPrefix(str) {
+  if (typeof str !== 'string') return str;
+  const trimmed = str.trimStart();
+  if (trimmed.startsWith(")]}'\n")) return trimmed.slice(5);
+  if (trimmed.startsWith(")]}'\r\n")) return trimmed.slice(6);
+  if (trimmed.startsWith(")]}'")) return trimmed.slice(4).trimStart();
+  if (trimmed.startsWith(")]}\n")) return trimmed.slice(4);
+  if (trimmed.startsWith(")]}")) return trimmed.slice(3).trimStart();
+  return str;
+}
+
+function highlightJson(jsonStr) {
+  if (!jsonStr || typeof jsonStr !== 'string') return '';
+  const code = jsonStr;
+  const ranges = [];
+  const add = (re, cls) => {
+    let m;
+    const copy = new RegExp(re.source, re.flags);
+    while ((m = copy.exec(code)) !== null) {
+      ranges.push({ start: m.index, end: m.index + m[0].length, cls, text: m[0] });
+    }
+  };
+  add(/"(?:[^"\\]|\\.)*"(?=\s*:)/g, 'hl-json-key');
+  add(/"(?:[^"\\]|\\.)*"/g, 'hl-json-string');
+  add(/\b(true|false|null)\b/g, 'hl-json-literal');
+  add(/\b(-?\d+\.?\d*([eE][+-]?\d+)?)\b/g, 'hl-json-number');
+  ranges.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const r of ranges) {
+    if (merged.length && r.start < merged[merged.length - 1].end) continue;
+    merged.push(r);
+  }
+  let out = '';
+  let pos = 0;
+  for (const r of merged) {
+    out += escapeHtml(code.slice(pos, r.start));
+    out += `<span class="${r.cls}">${escapeHtml(r.text)}</span>`;
+    pos = r.end;
+  }
+  out += escapeHtml(code.slice(pos));
+  return out;
+}
+
+function getSourceFileLabel(url) {
+  if (!url) return 'Unknown file';
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const last = parts.length ? parts[parts.length - 1] : parsed.hostname;
+    return last || parsed.hostname || url;
+  } catch (_) {
+    return url;
+  }
+}
+
+function buildLineStarts(text) {
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function getLineNumberForIndex(lineStarts, index) {
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const start = lineStarts[mid];
+    const next = mid + 1 < lineStarts.length ? lineStarts[mid + 1] : Number.MAX_SAFE_INTEGER;
+    if (index < start) high = mid - 1;
+    else if (index >= next) low = mid + 1;
+    else return mid + 1;
+  }
+  return 1;
+}
+
+function buildContextSnippet(lines, startLine, endLine, radius = 10) {
+  const from = Math.max(1, startLine - radius);
+  const to = Math.min(lines.length, endLine + radius);
+  return lines.slice(from - 1, to).map((line, idx) => {
+    const lineNumber = from + idx;
+    return `${String(lineNumber).padStart(5, ' ')} | ${line}`;
+  }).join('\n');
+}
+
+function normalizeCommentPreview(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+function stripCommentDecorators(text, syntax) {
+  let value = String(text || '');
+  if (syntax === 'html') value = value.replace(/^<!--\s?|\s?-->$/g, '');
+  else if (syntax === 'block') value = value.replace(/^\/\*\s?|\s?\*\/$/g, '');
+  else if (syntax === 'line') value = value.replace(/^\/\/\s?/, '');
+  return normalizeCommentPreview(value);
+}
+
+function extractHtmlComments(text, sourceMeta) {
+  const comments = [];
+  const lines = text.split(/\r?\n/);
+  const lineStarts = buildLineStarts(text);
+  const regex = /<!--([\s\S]*?)-->/g;
+  let match;
+  while ((match = regex.exec(text))) {
+    const full = match[0];
+    const startLine = getLineNumberForIndex(lineStarts, match.index);
+    const endLine = getLineNumberForIndex(lineStarts, match.index + full.length - 1);
+    comments.push({
+      fileUrl: sourceMeta.fileUrl,
+      rawUrl: sourceMeta.rawUrl || sourceMeta.fileUrl,
+      fileLabel: sourceMeta.fileLabel,
+      sourceType: sourceMeta.sourceType,
+      syntax: 'html',
+      text: stripCommentDecorators(full, 'html'),
+      line: startLine,
+      endLine,
+      context: buildContextSnippet(lines, startLine, endLine, 10)
+    });
+  }
+  return comments;
+}
+
+function extractCodeComments(text, sourceMeta, options = {}) {
+  const comments = [];
+  const lines = text.split(/\r?\n/);
+  const lineStarts = buildLineStarts(text);
+  const allowLineComments = options.allowLineComments !== false;
+  let i = 0;
+  let state = 'normal';
+  let startIndex = -1;
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (state === 'line') {
+      if (ch === '\n') {
+        const raw = text.slice(startIndex, i);
+        const relStart = getLineNumberForIndex(lineStarts, startIndex);
+        const relEnd = getLineNumberForIndex(lineStarts, Math.max(startIndex, i - 1));
+        const startLine = sourceMeta.lineOffset + relStart - 1;
+        const endLine = sourceMeta.lineOffset + relEnd - 1;
+        comments.push({
+          fileUrl: sourceMeta.fileUrl,
+          rawUrl: sourceMeta.rawUrl || sourceMeta.fileUrl,
+          fileLabel: sourceMeta.fileLabel,
+          sourceType: sourceMeta.sourceType,
+          syntax: 'line',
+          text: stripCommentDecorators(raw, 'line'),
+          line: startLine,
+          endLine,
+          context: buildContextSnippet(sourceMeta.fullLines || lines, startLine, endLine, 10)
+        });
+        state = 'normal';
+      }
+      i += 1;
+      continue;
+    }
+    if (state === 'block') {
+      if (ch === '*' && next === '/') {
+        const endExclusive = i + 2;
+        const raw = text.slice(startIndex, endExclusive);
+        const relStart = getLineNumberForIndex(lineStarts, startIndex);
+        const relEnd = getLineNumberForIndex(lineStarts, endExclusive - 1);
+        const startLine = sourceMeta.lineOffset + relStart - 1;
+        const endLine = sourceMeta.lineOffset + relEnd - 1;
+        comments.push({
+          fileUrl: sourceMeta.fileUrl,
+          rawUrl: sourceMeta.rawUrl || sourceMeta.fileUrl,
+          fileLabel: sourceMeta.fileLabel,
+          sourceType: sourceMeta.sourceType,
+          syntax: 'block',
+          text: stripCommentDecorators(raw, 'block'),
+          line: startLine,
+          endLine,
+          context: buildContextSnippet(sourceMeta.fullLines || lines, startLine, endLine, 10)
+        });
+        state = 'normal';
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (state === 'single') {
+      if (ch === '\\') i += 2;
+      else if (ch === '\'') { state = 'normal'; i += 1; }
+      else i += 1;
+      continue;
+    }
+    if (state === 'double') {
+      if (ch === '\\') i += 2;
+      else if (ch === '"') { state = 'normal'; i += 1; }
+      else i += 1;
+      continue;
+    }
+    if (state === 'template') {
+      if (ch === '\\') i += 2;
+      else if (ch === '`') { state = 'normal'; i += 1; }
+      else i += 1;
+      continue;
+    }
+
+    if (ch === '\'') { state = 'single'; i += 1; continue; }
+    if (ch === '"') { state = 'double'; i += 1; continue; }
+    if (ch === '`') { state = 'template'; i += 1; continue; }
+    if (ch === '/' && next === '*') {
+      startIndex = i;
+      state = 'block';
+      i += 2;
+      continue;
+    }
+    if (allowLineComments && ch === '/' && next === '/') {
+      const prev = text[i - 1] || '';
+      if (prev !== ':') {
+        startIndex = i;
+        state = 'line';
+        i += 2;
+        continue;
+      }
+    }
+    i += 1;
+  }
+
+  if (state === 'line' && startIndex >= 0) {
+    const raw = text.slice(startIndex);
+    const relStart = getLineNumberForIndex(lineStarts, startIndex);
+    const relEnd = getLineNumberForIndex(lineStarts, text.length ? text.length - 1 : 0);
+    const startLine = sourceMeta.lineOffset + relStart - 1;
+    const endLine = sourceMeta.lineOffset + relEnd - 1;
+    comments.push({
+      fileUrl: sourceMeta.fileUrl,
+      rawUrl: sourceMeta.rawUrl || sourceMeta.fileUrl,
+      fileLabel: sourceMeta.fileLabel,
+      sourceType: sourceMeta.sourceType,
+      syntax: 'line',
+      text: stripCommentDecorators(raw, 'line'),
+      line: startLine,
+      endLine,
+      context: buildContextSnippet(sourceMeta.fullLines || lines, startLine, endLine, 10)
+    });
+  }
+
+  return comments.filter(comment => comment.text && comment.text.trim());
+}
+
+function extractInlineBlocksFromHtml(html, tagName) {
+  const blocks = [];
+  const regex = new RegExp(`<${tagName}\\b([^>]*)>([\\s\\S]*?)<\\/${tagName}>`, 'gi');
+  let match;
+  while ((match = regex.exec(html))) {
+    const attrs = match[1] || '';
+    if (/\bsrc\s*=|\bhref\s*=/i.test(attrs)) continue;
+    const openTag = match[0].slice(0, match[0].indexOf('>') + 1);
+    const content = match[2] || '';
+    const contentStart = match.index + openTag.length;
+    blocks.push({ content, contentStart });
+  }
+  return blocks;
+}
+
+async function fetchTextResource(url) {
+  const response = await fetch(url, { credentials: 'include' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+
+async function buildCommentInventory(sources) {
+  const comments = [];
+  const fileSet = new Set();
+  const pageUrl = sources && sources.pageUrl ? sources.pageUrl : '';
+  const pageTitle = sources && sources.pageTitle ? sources.pageTitle : '';
+
+  if (pageUrl) {
+    try {
+      const html = await fetchTextResource(pageUrl);
+      const pageLabel = getSourceFileLabel(pageUrl);
+      const fullLines = html.split(/\r?\n/);
+      comments.push(...extractHtmlComments(html, {
+        fileUrl: pageUrl,
+        rawUrl: pageUrl,
+        fileLabel: pageLabel,
+        sourceType: 'html',
+        lineOffset: 1,
+        fullLines
+      }));
+
+      const inlineScripts = extractInlineBlocksFromHtml(html, 'script');
+      inlineScripts.forEach((block, index) => {
+        const lineOffset = getLineNumberForIndex(buildLineStarts(html), block.contentStart);
+        comments.push(...extractCodeComments(block.content, {
+          fileUrl: pageUrl,
+          rawUrl: pageUrl,
+          fileLabel: `${pageLabel} (inline script #${index + 1})`,
+          sourceType: 'inline-script',
+          lineOffset,
+          fullLines
+        }, { allowLineComments: true }));
+      });
+
+      const inlineStyles = extractInlineBlocksFromHtml(html, 'style');
+      inlineStyles.forEach((block, index) => {
+        const lineOffset = getLineNumberForIndex(buildLineStarts(html), block.contentStart);
+        comments.push(...extractCodeComments(block.content, {
+          fileUrl: pageUrl,
+          rawUrl: pageUrl,
+          fileLabel: `${pageLabel} (inline style #${index + 1})`,
+          sourceType: 'inline-style',
+          lineOffset,
+          fullLines
+        }, { allowLineComments: false }));
+      });
+
+      fileSet.add(pageUrl);
+    } catch (_) {}
+  }
+
+  const externalFiles = [
+    ...((sources && Array.isArray(sources.scripts) ? sources.scripts : []).map(url => ({ url, type: 'script' }))),
+    ...((sources && Array.isArray(sources.stylesheets) ? sources.stylesheets : []).map(url => ({ url, type: 'stylesheet' })))
+  ];
+
+  for (const entry of externalFiles) {
+    if (!entry.url || fileSet.has(entry.url)) continue;
+    fileSet.add(entry.url);
+    try {
+      const text = await fetchTextResource(entry.url);
+      const fileLabel = getSourceFileLabel(entry.url);
+      comments.push(...extractCodeComments(text, {
+        fileUrl: entry.url,
+        rawUrl: entry.url,
+        fileLabel,
+        sourceType: entry.type,
+        lineOffset: 1,
+        fullLines: text.split(/\r?\n/)
+      }, { allowLineComments: entry.type === 'script' }));
+    } catch (_) {}
+  }
+
+  comments.sort((a, b) => {
+    if (a.fileUrl !== b.fileUrl) return a.fileUrl.localeCompare(b.fileUrl);
+    return a.line - b.line;
+  });
+
+  return { pageUrl, pageTitle, comments };
+}
+
+function computeCommentsSignature(data) {
+  const list = data && Array.isArray(data.comments) ? data.comments : [];
+  return list.map(comment => [
+    comment.fileUrl || '',
+    comment.fileLabel || '',
+    comment.syntax || '',
+    comment.text || '',
+    comment.line || ''
+  ].join('|')).join('||');
+}
+
+function renderCommentsTab() {
+  const container = document.getElementById('requestsContainer');
+  if (!container) return;
+
+  const comments = Array.isArray(pageCommentsData.comments) ? pageCommentsData.comments : [];
+  const fileCount = new Set(comments.map(comment => comment.fileUrl).filter(Boolean)).size;
+
+  if (!comments.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-text">
+          No source comments detected for<br>
+          <span style="color:var(--blue);font-weight:600">${escapeHtml(activeTabDomain || 'this page')}</span>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const cardsHtml = comments.map(comment => {
+    const meta = [comment.sourceType || 'source', `${comment.syntax} comment`, `line ${comment.line}`];
+    const preview = normalizeCommentPreview(comment.text).slice(0, 180) || '(empty comment)';
+    return `
+      <details class="comments-card">
+        <summary class="comments-card-summary">
+          <div class="comments-card-meta">${escapeHtml(meta.join(' · '))}</div>
+          <div class="comments-card-text">${escapeHtml(preview)}</div>
+        </summary>
+        <div class="comments-card-body">
+          <div class="comments-card-file">File: <a href="${escapeAttribute(comment.rawUrl || comment.fileUrl || '#')}" target="_blank" rel="noopener" class="comments-card-link">${escapeHtml(comment.fileLabel || comment.fileUrl || 'Unknown file')}</a></div>
+          <div class="comments-card-file">Location: line ${escapeHtml(String(comment.line || ''))}${comment.endLine && comment.endLine !== comment.line ? `-${escapeHtml(String(comment.endLine))}` : ''}</div>
+          <div class="comments-card-full">${escapeHtml(comment.text || '')}</div>
+          <pre class="comments-card-context"><code>${escapeHtml(comment.context || '')}</code></pre>
+        </div>
+      </details>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="comments-panel">
+      <div class="comments-summary">
+        <div><strong>${comments.length}</strong> comment${comments.length === 1 ? '' : 's'} detected</div>
+        <div>${fileCount} file${fileCount === 1 ? '' : 's'} scanned</div>
+        ${pageCommentsData.pageTitle ? `<div>${escapeHtml(pageCommentsData.pageTitle)}</div>` : ''}
+      </div>
+      ${cardsHtml}
+    </div>
+  `;
+}
+
+function buildCommentsCardBody(comment) {
+  if (!comment) return '';
+  const lang = getCodeLanguage(comment);
+  const contextHtml = highlightCode(comment.context || '', lang);
+  return `
+    <div class="comments-card-file">File: <a href="${escapeAttribute(comment.rawUrl || comment.fileUrl || '#')}" target="_blank" rel="noopener" class="comments-card-link">${escapeHtml(comment.fileLabel || comment.fileUrl || 'Unknown file')}</a></div>
+    <div class="comments-card-file">Location: line ${escapeHtml(String(comment.line || ''))}${comment.endLine && comment.endLine !== comment.line ? `-${escapeHtml(String(comment.endLine))}` : ''}</div>
+    <div class="comments-card-full">${escapeHtml(comment.text || '')}</div>
+    <pre class="comments-card-context"><code>${contextHtml}</code></pre>
+  `;
+}
+
+function attachCommentsHandlers() {
+  document.querySelectorAll('.comments-card[data-comment-index]').forEach(card => {
+    card.addEventListener('toggle', () => {
+      if (!card.open) return;
+      const index = Number(card.getAttribute('data-comment-index'));
+      const body = card.querySelector('.comments-card-body');
+      if (!body || body.getAttribute('data-rendered') === 'true') return;
+      const comment = pageCommentsData.comments && pageCommentsData.comments[index];
+      body.innerHTML = buildCommentsCardBody(comment);
+      body.setAttribute('data-rendered', 'true');
+    });
+  });
+}
+
+function renderCommentsTabEnhanced() {
+  const container = document.getElementById('requestsContainer');
+  if (!container) return;
+
+  const comments = Array.isArray(pageCommentsData.comments) ? pageCommentsData.comments : [];
+  const fileCount = new Set(comments.map(comment => comment.fileUrl).filter(Boolean)).size;
+
+  if (!comments.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-text">
+          No source comments detected for<br>
+          <span style="color:var(--blue);font-weight:600">${escapeHtml(activeTabDomain || 'this page')}</span>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const cardsHtml = comments.map((comment, index) => {
+    const meta = [comment.sourceType || 'source', `${comment.syntax} comment`, `line ${comment.line}`];
+    const preview = normalizeCommentPreview(comment.text).slice(0, 180) || '(empty comment)';
+    return `
+      <details class="comments-card" data-comment-index="${index}">
+        <summary class="comments-card-summary">
+          <div class="comments-card-summary-main">
+            <div class="comments-card-meta">${escapeHtml(meta.join(' | '))}</div>
+            <div class="comments-card-text">${escapeHtml(preview)}</div>
+          </div>
+          <div class="comments-card-chevron" aria-hidden="true">▾</div>
+        </summary>
+        <div class="comments-card-body" data-rendered="false"></div>
+      </details>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="comments-panel">
+      <div class="comments-summary">
+        <div><strong>${comments.length}</strong> comment${comments.length === 1 ? '' : 's'} detected</div>
+        <div>${fileCount} file${fileCount === 1 ? '' : 's'} scanned</div>
+        ${pageCommentsData.pageTitle ? `<div>${escapeHtml(pageCommentsData.pageTitle)}</div>` : ''}
+      </div>
+      ${cardsHtml}
+    </div>
+  `;
+
+  attachCommentsHandlers();
 }
 
 function renderCurrentTab(requests) {
@@ -674,11 +1435,16 @@ function renderActiveInterceptionTab() {
     return;
   }
 
+  const dbEntries = entries.filter(e => e.isDb === true);
+  const apiEntries = entries.filter(e => e.isDb !== true);
+  const storageDbCount = Number(activeInterceptionStats && activeInterceptionStats.storageDbCount) ?? dbEntries.length;
+
   const summary = `Scripts scanned: ${Number(activeInterceptionStats.scriptsScanned) || 0} | ` +
+    `Storage & DB: ${storageDbCount} | ` +
     `Endpoint candidates: ${entries.length} | ` +
     `Hits: ${Number(activeInterceptionStats.endpointHits) || 0}`;
 
-  const cardsHtml = entries.map((entry, idx) => {
+  function buildEndpointCard(entry, idx, isDb) {
     const endpointRequest = buildActiveEndpointRequest(entry);
     const commandPs = generateCurlForMode('ps', endpointRequest);
     const sourceScripts = Array.isArray(entry.sourceScripts) ? entry.sourceScripts : [];
@@ -687,9 +1453,27 @@ function renderActiveInterceptionTab() {
     const matchers = Array.isArray(entry.matchers) ? entry.matchers.join(', ') : (entry.matcher || 'unknown');
     const confidence = (entry.confidence || 'medium').toUpperCase();
     const seenText = formatLastSeen(entry.lastSeen);
-    const snippet = entry.snippet ? `\nSnippet: ${entry.snippet}` : '';
     const dynamicNote = entry.dynamic ? '\nDynamic URL: this candidate may require runtime values.' : '';
     const cmdPreId = `activeEndpointCmd_${idx}`;
+
+    const contextText = entry.contextSnippet || (entry.snippet ? `    1 | ${entry.snippet}` : '');
+    const contextBlock = isDb && contextText
+      ? `<div class="active-endpoint-context"><pre class="comments-card-context"><code>${highlightCode(contextText, 'javascript')}</code></pre></div>`
+      : '';
+
+    const shellBlock = !isDb
+      ? `<div class="active-shell-container">
+          <div class="active-shell-header-row">
+            <div class="shell-toggle">
+              <button class="shell-btn active" data-mode="ps" data-entry-index="${idx}" title="PowerShell">PS</button>
+              <button class="shell-btn" data-mode="cmd" data-entry-index="${idx}" title="Command Prompt">CMD</button>
+              <button class="shell-btn" data-mode="bash" data-entry-index="${idx}" title="Linux / macOS (curl)">Bash</button>
+            </div>
+            <button class="copy-btn active-shell-copy" data-entry-index="${idx}">Copy</button>
+          </div>
+          <pre class="active-shell-command curl-command" id="${cmdPreId}">${escapeHtml(commandPs)}</pre>
+        </div>`
+      : '';
 
     return `
       <div class="active-endpoint-card" data-entry-index="${idx}">
@@ -700,26 +1484,40 @@ function renderActiveInterceptionTab() {
         <div class="active-endpoint-url">${escapeHtml(entry.url || entry.rawUrl || '')}</div>
         <div class="active-endpoint-meta">Seen ${escapeHtml(seenText)} | Matches: ${escapeHtml(String(entry.occurrences || 1))} | Detector(s): ${escapeHtml(matchers)}
 Sources:
-${escapeHtml(sourcePreview + sourceMore + snippet + dynamicNote)}</div>
-        <div class="active-shell-container">
-          <div class="active-shell-header-row">
-            <div class="shell-toggle">
-              <button class="shell-btn active" data-mode="ps" data-entry-index="${idx}" title="PowerShell">PS</button>
-              <button class="shell-btn" data-mode="cmd" data-entry-index="${idx}" title="Command Prompt">CMD</button>
-              <button class="shell-btn" data-mode="bash" data-entry-index="${idx}" title="Linux / macOS (curl)">Bash</button>
-            </div>
-            <button class="copy-btn active-shell-copy" data-entry-index="${idx}">Copy</button>
-          </div>
-          <pre class="active-shell-command curl-command" id="${cmdPreId}">${escapeHtml(commandPs)}</pre>
-        </div>
+${escapeHtml(sourcePreview + sourceMore + dynamicNote)}</div>
+        ${contextBlock}
+        ${shellBlock}
       </div>
     `;
+  }
+
+  const dbCardsHtml = dbEntries.map(entry => {
+    const idx = activeInterceptionEntries.findIndex(e => e.key === entry.key);
+    return buildEndpointCard(entry, idx >= 0 ? idx : 0, true);
   }).join('');
+  const apiCardsHtml = apiEntries.map(entry => {
+    const idx = activeInterceptionEntries.findIndex(e => e.key === entry.key);
+    return buildEndpointCard(entry, idx >= 0 ? idx : 0, false);
+  }).join('');
+
+  const storageDbSection = dbEntries.length > 0
+    ? `<div class="active-interception-section">
+        <div class="active-interception-section-title">Storage & DB</div>
+        ${dbCardsHtml}
+      </div>`
+    : '';
+  const apiSection = apiEntries.length > 0
+    ? `<div class="active-interception-section">
+        <div class="active-interception-section-title">API endpoints</div>
+        ${apiCardsHtml}
+      </div>`
+    : '';
 
   container.innerHTML = `
     <div class="active-interception-panel">
       <div class="active-interception-summary">${escapeHtml(summary)}</div>
-      ${cardsHtml}
+      ${storageDbSection}
+      ${apiSection}
     </div>
   `;
 
@@ -839,7 +1637,7 @@ function showRequestDetails(request) {
     infoSection.style.display = 'none';
   }
 
-  document.getElementById('detailUrl').textContent = request.url;
+  document.getElementById('detailUrl').innerHTML = '<pre class="code-block"><code>' + escapeHtml(request.url || '') + '</code></pre>';
   document.getElementById('detailMethod').innerHTML =
     `<strong>Method:</strong> ${request.method}<br>` +
     `<strong>Time:</strong> ${new Date(request.timestamp).toLocaleString()}<br>` +
@@ -849,21 +1647,31 @@ function showRequestDetails(request) {
   if (request.headers) {
     const hdrs = Array.isArray(request.headers) ? request.headers : Object.entries(request.headers);
     const filtered = hdrs.filter(h => { const v = h.value||h[1]; return v && String(v)!=='undefined' && String(v)!=='null'; });
-    dh.innerHTML = filtered.length
-      ? filtered.map(h => `<strong>${h.name||h[0]}:</strong> ${h.value||h[1]}`).join('<br>')
+    const headersText = filtered.length
+      ? filtered.map(h => `${h.name||h[0]}: ${h.value||h[1]}`).join('\n')
       : 'No headers captured';
-  } else { dh.textContent = 'No headers captured'; }
+    dh.innerHTML = '<pre class="code-block"><code>' + escapeHtml(headersText) + '</code></pre>';
+  } else {
+    dh.innerHTML = '<pre class="code-block"><code>No headers captured</code></pre>';
+  }
 
   const bs = document.getElementById('bodySection');
   const db = document.getElementById('detailBody');
   if (request.body && request.body !== 'null') {
     bs.style.display = 'block';
+    let bodyStr;
     if (typeof request.body === 'string') {
-      try { db.textContent = JSON.stringify(JSON.parse(request.body), null, 2); }
-      catch { db.textContent = request.body; }
+      try { bodyStr = JSON.stringify(JSON.parse(request.body), null, 2); }
+      catch { bodyStr = request.body; }
     } else if (typeof request.body === 'object') {
-      db.textContent = JSON.stringify(request.body, null, 2);
-    } else { db.textContent = String(request.body); }
+      bodyStr = JSON.stringify(request.body, null, 2);
+    } else { bodyStr = String(request.body); }
+    try {
+      JSON.parse(bodyStr);
+      db.innerHTML = '<pre class="json-display"><code>' + highlightJson(bodyStr) + '</code></pre>';
+    } catch {
+      db.textContent = bodyStr;
+    }
   } else { bs.style.display = 'none'; }
 
   const rs = document.getElementById('responseSection');
@@ -876,11 +1684,25 @@ function showRequestDetails(request) {
     rs.style.display = 'block';
     responseTitleEl.textContent = isDocument ? 'Document Contents' : 'Response Body';
     if (hasResponseBody) {
+      let respStr;
       if (typeof request.responseBody === 'string') {
-        try { dr.textContent = JSON.stringify(JSON.parse(request.responseBody), null, 2); }
-        catch { dr.textContent = request.responseBody; }
+        const stripped = stripJsonXssiPrefix(request.responseBody);
+        try { respStr = JSON.stringify(JSON.parse(stripped), null, 2); }
+        catch { respStr = request.responseBody; }
       } else {
-        dr.textContent = String(request.responseBody);
+        respStr = String(request.responseBody);
+      }
+      if (isDocument) {
+        dr.innerHTML = '<pre class="code-block html-code-block"><code>' + highlightCode(respStr, 'html') + '</code></pre>';
+      } else {
+        const toParse = stripJsonXssiPrefix(respStr);
+        try {
+          const parsed = JSON.parse(toParse);
+          const formatted = JSON.stringify(parsed, null, 2);
+          dr.innerHTML = '<pre class="json-display"><code>' + highlightJson(formatted) + '</code></pre>';
+        } catch {
+          dr.textContent = respStr;
+        }
       }
     } else {
       dr.textContent = isDocument ? '(No document content captured. Main frame responses are not intercepted by the extension.)' : '(No response body)';
@@ -918,36 +1740,108 @@ function getActiveTab() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs && tabs[0]) {
       activeTabId = tabs[0].id;
+      activeTabUrl = tabs[0].url || '';
       try { activeTabDomain = new URL(tabs[0].url).hostname; } catch { activeTabDomain = ''; }
-      loadRequests();
+      if (currentView === 'current' || currentView === 'history') {
+        startCurrentHistoryRefresh();
+      } else {
+        stopCurrentHistoryRefresh();
+      }
+      if (currentView === 'comments') {
+        loadPageComments(() => renderCommentsTabEnhanced());
+      } else {
+        loadRequests();
+      }
+    } else {
+      activeTabId = -1;
+      activeTabUrl = '';
+      activeTabDomain = '';
     }
   });
+}
+
+function updateActiveInterceptionSummaryOnly() {
+  const summaryEl = document.querySelector('.active-interception-summary');
+  if (!summaryEl || currentView !== 'activeInterception') return;
+  let entries = Array.isArray(activeInterceptionEntries) ? activeInterceptionEntries.slice() : [];
+  if (requestFilterMethods.size > 0) entries = entries.filter(e => requestFilterMethods.has((e.method || '').toUpperCase()));
+  if (requestUrlSearchQuery.trim()) {
+    const q = requestUrlSearchQuery.trim();
+    entries = entries.filter(e => {
+      const t = `${e.url || ''} ${e.rawUrl || ''} ${(e.sourceScripts || []).join(' ')} ${(e.matchers || []).join(' ')}`;
+      return matchRequestSearch({ url: t, responseBody: t }, q);
+    });
+  }
+  const dbEntries = entries.filter(e => e.isDb === true);
+  const storageDbCount = Number(activeInterceptionStats && activeInterceptionStats.storageDbCount) ?? dbEntries.length;
+  const summary = `Scripts scanned: ${Number(activeInterceptionStats.scriptsScanned) || 0} | ` +
+    `Storage & DB: ${storageDbCount} | ` +
+    `Endpoint candidates: ${entries.length} | ` +
+    `Hits: ${Number(activeInterceptionStats.endpointHits) || 0}`;
+  summaryEl.textContent = summary;
 }
 
 function loadActiveInterceptionData(done) {
   chrome.runtime.sendMessage({ action: 'getActiveInterceptionData', tabId: activeTabId }, (response) => {
     if (response && Array.isArray(response.entries)) {
-      activeInterceptionEntries = response.entries;
-      activeInterceptionStats = response.stats || { scriptsScanned: 0, endpointCount: response.entries.length, endpointHits: 0, updatedAt: null };
+      const entries = response.entries;
+      const stats = response.stats || { scriptsScanned: 0, storageDbCount: 0, endpointCount: entries.length, endpointHits: 0, updatedAt: null };
+      const signature = entries.map(e => e.key || '').sort().join('|');
+      if (signature && entries.length > 0 && signature === lastActiveInterceptionEntriesSignature && currentView === 'activeInterception') {
+        activeInterceptionEntries = entries;
+        activeInterceptionStats = stats;
+        updateActiveInterceptionSummaryOnly();
+        return;
+      }
+      lastActiveInterceptionEntriesSignature = signature;
+      activeInterceptionEntries = entries;
+      activeInterceptionStats = stats;
     } else {
+      lastActiveInterceptionEntriesSignature = '';
+      lastActiveInterceptionEntriesSignature = '';
       activeInterceptionEntries = [];
-      activeInterceptionStats = { scriptsScanned: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
+      activeInterceptionStats = { scriptsScanned: 0, storageDbCount: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
     }
     if (typeof done === 'function') done();
   });
 }
 
 function loadRequests() {
-  chrome.runtime.sendMessage({ action: 'getRequests' }, r => {
+  if (currentView === 'comments') {
+    loadPageComments(() => renderCommentsTabEnhanced());
+    return;
+  }
+  const requestPayload = currentView === 'bugs'
+    ? { action: 'getRequestsForBugAnalysis', tabId: activeTabId, hostname: activeTabDomain, pageUrl: activeTabUrl }
+    : { action: 'getRequests' };
+  chrome.runtime.sendMessage(requestPayload, r => {
     if (r && r.requests) {
       currentRequests = r.requests;
-      if (currentView === 'activeInterception') {
+      if (currentView === 'activeInterception' || currentView === 'bugs') {
         loadActiveInterceptionData(() => renderRequests(currentRequests));
       } else {
         renderRequests(currentRequests);
       }
     }
   });
+}
+
+function stopCurrentHistoryRefresh() {
+  if (currentHistoryRefreshInterval) {
+    clearInterval(currentHistoryRefreshInterval);
+    currentHistoryRefreshInterval = null;
+  }
+}
+
+function startCurrentHistoryRefresh() {
+  stopCurrentHistoryRefresh();
+  currentHistoryRefreshInterval = setInterval(() => {
+    if (currentView === 'current' || currentView === 'history') {
+      loadRequests();
+    } else {
+      stopCurrentHistoryRefresh();
+    }
+  }, CURRENT_HISTORY_REFRESH_MS);
 }
 
 function stopTwitterRefresh() {
@@ -1046,6 +1940,47 @@ function startPinterestRefresh() {
   pinterestRefreshInterval = setInterval(loadRequests, PINTEREST_REFRESH_MS);
 }
 
+function stopCommentsRefresh() {
+  if (commentsRefreshInterval) {
+    clearInterval(commentsRefreshInterval);
+    commentsRefreshInterval = null;
+  }
+}
+
+function loadPageComments(done) {
+  if (!Number.isFinite(activeTabId) || activeTabId < 0) {
+    pageCommentsData = { pageUrl: '', pageTitle: '', comments: [] };
+    if (typeof done === 'function') done();
+    return;
+  }
+  const prevSignature = lastCommentsDataSignature;
+  chrome.tabs.sendMessage(activeTabId, { action: 'getPageCommentSources' }, async (response) => {
+    if (chrome.runtime.lastError || !response) {
+      pageCommentsData = { pageUrl: '', pageTitle: '', comments: [] };
+      lastCommentsDataSignature = '';
+      if (typeof done === 'function') done();
+      return;
+    }
+    try {
+      pageCommentsData = await buildCommentInventory(response);
+      lastCommentsDataSignature = computeCommentsSignature(pageCommentsData);
+    } catch (_) {
+      pageCommentsData = { pageUrl: response.pageUrl || '', pageTitle: response.pageTitle || '', comments: [] };
+      lastCommentsDataSignature = '';
+    }
+    if (typeof done === 'function' && (lastCommentsDataSignature !== prevSignature || !(pageCommentsData.comments && pageCommentsData.comments.length))) done();
+  });
+}
+
+function startCommentsRefresh() {
+  stopCommentsRefresh();
+  commentsRefreshInterval = setInterval(() => {
+    loadPageComments(() => {
+      if (currentView === 'comments') renderCommentsTabEnhanced();
+    });
+  }, COMMENTS_REFRESH_MS);
+}
+
 function stopActiveInterceptionRefresh() {
   if (activeInterceptionRefreshInterval) {
     clearInterval(activeInterceptionRefreshInterval);
@@ -1065,8 +2000,11 @@ function clearRequests() {
     if (r && r.success) {
       currentRequests = [];
       combinedRequestsCache = [];
+      lastActiveInterceptionEntriesSignature = '';
       activeInterceptionEntries = [];
-      activeInterceptionStats = { scriptsScanned: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
+      activeInterceptionStats = { scriptsScanned: 0, storageDbCount: 0, endpointCount: 0, endpointHits: 0, updatedAt: null };
+      pageCommentsData = { pageUrl: '', pageTitle: '', comments: [] };
+      lastCommentsDataSignature = '';
       renderRequests(currentRequests);
     }
   });
@@ -1165,7 +2103,20 @@ document.addEventListener('DOMContentLoaded', () => {
   updateThemeIcon();
   loadShellMode();
 
-  document.getElementById('requestsContainer').addEventListener('click', (e) => {
+  const requestsContainer = document.getElementById('requestsContainer');
+  requestsContainer.addEventListener('wheel', (e) => {
+    if (!e.shiftKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    const codeBlock = e.target.closest('.bug-code-wrap .comments-card-context, .comments-card-context');
+    const scrollEl = (codeBlock && codeBlock.scrollWidth > codeBlock.clientWidth)
+      ? codeBlock
+      : (requestsContainer.scrollWidth > requestsContainer.clientWidth ? requestsContainer : null);
+    if (scrollEl) {
+      e.preventDefault();
+      scrollEl.scrollLeft += e.deltaY;
+    }
+  }, { passive: false });
+
+  requestsContainer.addEventListener('click', (e) => {
     const img = e.target.closest('img');
     if (img && img.src) {
       e.preventDefault();
@@ -1194,27 +2145,41 @@ document.addEventListener('DOMContentLoaded', () => {
       container.innerHTML = `
         <div class="empty-state">
           <div class="empty-text">
-            Refreshing...<br>
-            Fetching latest network traffic
+            Reloading page...<br>
+            Waiting for page to finish loading
           </div>
         </div>`;
     }
 
     chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-      if (tabs[0] && tabs[0].url) {
+      if (!tabs[0]) return;
+      const tabId = tabs[0].id;
+      if (tabs[0].url) {
         try { activeTabDomain = new URL(tabs[0].url).hostname; } catch {}
       }
 
-      lastTwitterDataSignature = '';
-      lastTikTokDataSignature = '';
-      lastSoundCloudDataSignature = '';
-      lastDiscordDataSignature = '';
-      lastFacebookDataSignature = '';
-      lastInstagramDataSignature = '';
-      lastGitHubDataSignature = '';
-      lastPinterestDataSignature = '';
+      const finishRefresh = () => {
+        chrome.tabs.onUpdated.removeListener(onComplete);
+        clearTimeout(timeoutId);
+        lastTwitterDataSignature = '';
+        lastTikTokDataSignature = '';
+        lastSoundCloudDataSignature = '';
+        lastDiscordDataSignature = '';
+        lastFacebookDataSignature = '';
+        lastInstagramDataSignature = '';
+        lastGitHubDataSignature = '';
+        lastPinterestDataSignature = '';
+        lastCommentsDataSignature = '';
+        loadRequests();
+      };
 
-      loadRequests();
+      const onComplete = (id, changeInfo) => {
+        if (id === tabId && changeInfo.status === 'complete') finishRefresh();
+      };
+      chrome.tabs.onUpdated.addListener(onComplete);
+      const timeoutId = setTimeout(finishRefresh, 15000);
+
+      chrome.tabs.reload(tabId);
     });
   });
   document.getElementById('clearBtn').addEventListener('click', clearRequests);
@@ -1341,14 +2306,44 @@ document.addEventListener('DOMContentLoaded', () => {
       tabsRoot.querySelectorAll('.tab-btn').forEach(tabBtn => {
         tabBtn.classList.toggle('active', tabBtn === btn);
       });
+      document.getElementById('settingsBtn')?.classList.remove('active');
       if (btn.id !== 'discordTabBtn') {
         document.getElementById('discordToolbar').style.display = 'none';
+      }
+      if (btn.id !== 'commentsTabBtn') {
+        stopCommentsRefresh();
       }
       if (btn.id !== 'activeInterceptionTabBtn') {
         stopActiveInterceptionRefresh();
       }
+      if (btn.id !== 'bugsTabBtn' && typeof stopBugRefresh === 'function') {
+        stopBugRefresh();
+      }
     });
   }
+
+  tabVisibilityUiReady = true;
+  applyTabVisibilitySettings();
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const change = changes[TAB_VISIBILITY_STORAGE_KEY];
+    if (!change) return;
+    tabVisibilitySettings = normalizeTabVisibilitySettings(change.newValue);
+    syncTabVisibilityUi();
+  });
+
+  document.getElementById('settingsBtn').addEventListener('click', () => {
+    currentView = 'settings';
+    document.getElementById('requestSearchPopup').classList.remove('visible');
+    document.getElementById('requestFilterPopup').classList.remove('visible');
+    document.getElementById('discordToolbar').style.display = 'none';
+    document.getElementById('settingsBtn').classList.add('active');
+    document.querySelectorAll('.tabs .tab-btn').forEach(tabBtn => tabBtn.classList.remove('active'));
+    stopAllViewRefreshes();
+    resetAllPlatformDataSignatures();
+    renderRequests(currentRequests);
+  });
 
   document.getElementById('currentTabBtn').addEventListener('click', () => {
     currentView = 'current';
@@ -1379,7 +2374,8 @@ document.addEventListener('DOMContentLoaded', () => {
     lastInstagramDataSignature = '';
     lastGitHubDataSignature = '';
     lastPinterestDataSignature = '';
-    renderRequests(currentRequests);
+    startCurrentHistoryRefresh();
+    loadRequests();
   });
 
   document.getElementById('historyTabBtn').addEventListener('click', () => {
@@ -1411,12 +2407,32 @@ document.addEventListener('DOMContentLoaded', () => {
     lastInstagramDataSignature = '';
     lastGitHubDataSignature = '';
     lastPinterestDataSignature = '';
+    startCurrentHistoryRefresh();
+    loadRequests();
+  });
+
+  document.getElementById('commentsTabBtn').addEventListener('click', () => {
+    currentView = 'comments';
+    document.getElementById('discordToolbar').style.display = 'none';
+    stopCurrentHistoryRefresh();
+    stopTwitterRefresh();
+    stopTikTokRefresh();
+    stopSoundCloudRefresh();
+    stopDiscordRefresh();
+    stopFacebookRefresh();
+    stopInstagramRefresh();
+    stopGitHubRefresh();
+    stopPinterestRefresh();
+    stopActiveInterceptionRefresh();
+    startCommentsRefresh();
     renderRequests(currentRequests);
+    loadPageComments(() => renderCommentsTabEnhanced());
   });
 
   document.getElementById('activeInterceptionTabBtn').addEventListener('click', () => {
     currentView = 'activeInterception';
     document.getElementById('discordToolbar').style.display = 'none';
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1434,7 +2450,26 @@ document.addEventListener('DOMContentLoaded', () => {
     lastGitHubDataSignature = '';
     lastPinterestDataSignature = '';
     startActiveInterceptionRefresh();
+    renderRequests(currentRequests);
     loadActiveInterceptionData(() => renderRequests(currentRequests));
+  });
+
+  document.getElementById('bugsTabBtn').addEventListener('click', () => {
+    currentView = 'bugs';
+    document.getElementById('discordToolbar').style.display = 'none';
+    stopCurrentHistoryRefresh();
+    stopTwitterRefresh();
+    stopTikTokRefresh();
+    stopSoundCloudRefresh();
+    stopDiscordRefresh();
+    stopFacebookRefresh();
+    stopInstagramRefresh();
+    stopGitHubRefresh();
+    stopPinterestRefresh();
+    stopCommentsRefresh();
+    stopActiveInterceptionRefresh();
+    if (typeof startBugRefresh === 'function') startBugRefresh();
+    loadRequests();
   });
 
   document.getElementById('twitterTabBtn').addEventListener('click', () => {
@@ -1448,6 +2483,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('discordTabBtn').classList.remove('active');
     document.getElementById('facebookTabBtn').classList.remove('active');
     document.getElementById('instagramTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
     stopDiscordRefresh();
@@ -1475,6 +2511,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('instagramTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
     document.getElementById('pinterestTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopSoundCloudRefresh();
     stopDiscordRefresh();
@@ -1502,6 +2539,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('instagramTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
     document.getElementById('pinterestTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopDiscordRefresh();
@@ -1529,6 +2567,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('instagramTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
     document.getElementById('pinterestTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1560,6 +2599,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('instagramTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
     document.getElementById('pinterestTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1590,6 +2630,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('facebookTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
     document.getElementById('pinterestTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1620,6 +2661,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('discordTabBtn').classList.remove('active');
     document.getElementById('facebookTabBtn').classList.remove('active');
     document.getElementById('instagramTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1650,6 +2692,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('facebookTabBtn').classList.remove('active');
     document.getElementById('instagramTabBtn').classList.remove('active');
     document.getElementById('githubTabBtn').classList.remove('active');
+    stopCurrentHistoryRefresh();
     stopTwitterRefresh();
     stopTikTokRefresh();
     stopSoundCloudRefresh();
@@ -1673,15 +2716,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.id === 'detailModal') closeModal();
   });
 
-  document.getElementById('themeToggle').addEventListener('click', () => {
-    const current = document.documentElement.getAttribute('data-theme') || 'dark';
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    chrome.storage.local.set({ theme: next });
-    updateThemeIcon();
-  });
-
   getActiveTab();
 });
 
@@ -1693,13 +2727,5 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 window.addEventListener('pagehide', () => {
-  stopTwitterRefresh();
-  stopTikTokRefresh();
-  stopSoundCloudRefresh();
-  stopDiscordRefresh();
-  stopFacebookRefresh();
-  stopInstagramRefresh();
-  stopGitHubRefresh();
-  stopPinterestRefresh();
-  stopActiveInterceptionRefresh();
+  stopAllViewRefreshes();
 });
