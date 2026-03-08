@@ -498,7 +498,7 @@ function renderDiscordTab(requests) {
 
   const { users, messages } = aggregateDiscordDataFromRequests(discordRequests);
   const signature = users.length + ':' + messages.map(m => m.id).join(',');
-  if (signature === lastDiscordDataSignature) return;
+  if ((users.length > 0 || messages.length > 0) && signature === lastDiscordDataSignature) return;
   lastDiscordDataSignature = signature;
 
   const onDiscord = isDiscordDomain(activeTabDomain);
