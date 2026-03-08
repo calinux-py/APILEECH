@@ -1390,11 +1390,11 @@ function renderFacebookTab(requests) {
   const content = aggregateFacebookContentFromRequests(facebookRequests);
   const allImages = collectAllFacebookCdnImageUrls(facebookRequests);
   const signature = users.map(u => u.ent_id).sort().join(',') + '|' + profiles.map(p => p.userID).sort().join(',') + '|' + content.map(c => c.post_id).sort().join(',') + '|' + allImages.length + '|' + (allImages[0] || '');
-  if (signature === lastFacebookDataSignature) return;
+  const hasAny = users.length > 0 || profiles.length > 0 || content.length > 0 || allImages.length > 0;
+  if (hasAny && signature === lastFacebookDataSignature) return;
   lastFacebookDataSignature = signature;
 
   const onFacebook = isFacebookDomain(activeTabDomain);
-  const hasAny = users.length > 0 || profiles.length > 0 || content.length > 0 || allImages.length > 0;
   if (!hasAny) {
     container.innerHTML = `
       <div class="facebook-panel">
