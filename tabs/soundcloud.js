@@ -257,7 +257,7 @@ function renderSoundCloudTab(requests) {
 
   const tracks = aggregateSoundCloudTracksFromRequests(soundcloudRequests);
   const signature = tracks.map(t => t.trackId + ':' + (t.title || '') + ':' + (t.streamUrl || '') + ':' + ((t.comments && t.comments.length) || 0)).join(',');
-  if (signature === lastSoundCloudDataSignature) return;
+  if (tracks.length > 0 && signature === lastSoundCloudDataSignature) return;
   lastSoundCloudDataSignature = signature;
 
   const onSoundCloud = isSoundCloudDomain(activeTabDomain);
