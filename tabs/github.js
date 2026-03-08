@@ -2,7 +2,8 @@
 function isGitHubDomain(host) {
   if (!host) return false;
   return host === 'github.com' || host === 'api.github.com' || host.endsWith('.github.com');
-}function parseGitHubUserFromResponse(responseBody, url) {
+}
+function parseGitHubUserFromResponse(responseBody, url) {
   try {
     const raw = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody);
     const data = JSON.parse(raw);
@@ -32,7 +33,8 @@ function isGitHubDomain(host) {
       site_admin: data.site_admin,
     };
   } catch (_) { return null; }
-}function parseGitHubProfileFromHtml(html, url) {
+}
+function parseGitHubProfileFromHtml(html, url) {
   if (typeof html !== 'string') return null;
   const out = { contributionCount: null, contributionDays: [], reposContributedTo: [], activityPercentages: {}, timelineEvents: [], profileLogin: null };
   const loginMatch = url.match(/github\.com\/([^/?]+)/);
@@ -252,7 +254,7 @@ function renderGitHubTab(requests) {
 
   const profiles = aggregateGitHubProfilesFromRequests(githubRequests);
   const signature = profiles.map(p => (p.login || '') + (p.contributionCount || '') + (p.contributionDays || []).length).sort().join(',');
-  if (signature === lastGitHubDataSignature) return;
+  if (profiles.length > 0 && signature === lastGitHubDataSignature) return;
   lastGitHubDataSignature = signature;
 
   const onGitHub = isGitHubDomain(activeTabDomain);
