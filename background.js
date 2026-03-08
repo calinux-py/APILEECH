@@ -9,6 +9,7 @@ const MAX_BODY_BUFFER = 200;
 const FALLBACK_WAIT_MS = 1500;
 const MAX_CAPTURED_BODY_CHARS = 120000;
 const MAX_CAPTURED_RESPONSE_CHARS = 1200000;
+const MAX_CAPTURED_DOCUMENT_CHARS = 500000;
 const MAX_POPUP_MESSAGE_BYTES = 56 * 1024 * 1024;
 const STATIC_FILTER_STORAGE_KEY = 'hideStaticResources';
 let hideStaticResourcesEnabled = true;
@@ -22,6 +23,56 @@ const ACTIVE_INTERCEPTION_NON_ENDPOINT_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.woff', '.woff2',
   '.ttf', '.eot', '.otf', '.map', '.mp4', '.webm', '.mp3', '.wav', '.pdf', '.zip'
 ]);
+const ACTIVE_INTERCEPTION_DB_SIGNATURES = [
+  { matcher: 'db.firebase-rtdb', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9.-]*\.firebaseio\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.firebase-rtdb-regional', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9.-]*\.firebasedatabase\.app(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.firebase-storage-download', confidence: 'high', regex: /https:\/\/firebasestorage\.googleapis\.com(?:\/[^\s'"`<>\\)]{1,400})?/gi },
+  { matcher: 'db.firebase-storage-bucket', confidence: 'high', regex: /(['"`])([a-z0-9][a-z0-9._-]*\.firebasestorage\.app)\1/gi, captureGroup: 2, normalize: ensureHttpsUrl },
+  { matcher: 'db.firebase-storage-bucket-legacy', confidence: 'high', regex: /storageBucket\s*:\s*(['"`])([a-z0-9][a-z0-9._-]*\.appspot\.com)\1/gi, captureGroup: 2, normalize: ensureHttpsUrl },
+  { matcher: 'db.firebase-auth-domain', confidence: 'high', regex: /(['"`])([a-z0-9][a-z0-9.-]*\.firebaseapp\.com)\1/gi, captureGroup: 2, normalize: ensureHttpsUrl },
+  { matcher: 'db.firebase-hosting-domain', confidence: 'medium', regex: /(['"`])([a-z0-9][a-z0-9.-]*\.web\.app)\1/gi, captureGroup: 2, normalize: ensureHttpsUrl },
+  { matcher: 'db.gcs-path-style', confidence: 'high', regex: /https:\/\/storage\.googleapis\.com(?:\/[^\s'"`<>\\)]{1,400})?/gi },
+  { matcher: 'db.gcs-virtual-hosted', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9._-]*\.storage\.googleapis\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-project-url', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-rest', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/rest\/v1(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-auth', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/auth\/v1(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-storage', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/storage\/v1(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-storage-render', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/storage\/v1\/render(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-functions', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/functions\/v1(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.supabase-realtime', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.supabase\.co\/realtime\/v1(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.appwrite-network', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.appwrite\.network(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.appwrite-cloud', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.cloud\.appwrite\.io(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.appwrite-run', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*\.appwrite\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.convex-cloud', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.convex\.cloud(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.convex-site', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.convex\.site(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-auth', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.auth\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-db', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.db\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-functions', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.functions\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-graphql', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.graphql\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-hasura', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.hasura\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.nhost-storage', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.storage\.[a-z0-9-]+\.nhost\.run(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.mongodb-data-api-global', confidence: 'high', regex: /https:\/\/data\.mongodb-api\.com\/app\/[a-z0-9-]+\/endpoint\/data\/(?:beta|v[0-9]+)(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.mongodb-data-api-regional', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.data\.mongodb-api\.com\/app\/[a-z0-9-]+\/endpoint\/data\/(?:beta|v[0-9]+)(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.upstash-rest', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.upstash\.io(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.turso-http', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*\.turso\.io(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-cosmos-documents', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.documents\.azure\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-cosmos-documents-gov', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.documents\.azure\.us(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-blob', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.blob\.core\.windows\.net(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-blob-zone', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.z[0-9]{2}\.blob\.storage\.azure\.net(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-file', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.file\.core\.windows\.net(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-queue', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.queue\.core\.windows\.net(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.azure-table', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9-]*\.table\.core\.windows\.net(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.dynamodb-public', confidence: 'high', regex: /https:\/\/dynamodb(?:-fips)?\.[a-z0-9-]+\.amazonaws\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.dynamodb-api-aws', confidence: 'high', regex: /https:\/\/dynamodb(?:-fips)?\.[a-z0-9-]+\.api\.aws(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.dynamodb-account-public', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.ddb\.[a-z0-9-]+\.amazonaws\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.dynamodb-account-api-aws', confidence: 'high', regex: /https:\/\/[a-z0-9-]+\.ddb\.[a-z0-9-]+\.api\.aws(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.s3-path-style', confidence: 'high', regex: /https:\/\/s3(?:\.dualstack)?\.[a-z0-9-]+\.amazonaws\.com\/[^\s'"`<>\\)]{1,400}/gi },
+  { matcher: 'db.s3-virtual-hosted', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9.-]*\.s3(?:\.dualstack)?\.[a-z0-9-]+\.amazonaws\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.s3-access-point', confidence: 'high', regex: /https:\/\/[a-z0-9-]+-[0-9]{12}\.s3-accesspoint\.[a-z0-9-]+\.amazonaws\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.cloudflare-r2-account', confidence: 'high', regex: /https:\/\/[a-z0-9]{32}\.r2\.cloudflarestorage\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.cloudflare-r2-bucket', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9.-]*\.[a-z0-9]{32}\.r2\.cloudflarestorage\.com(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+  { matcher: 'db.cloudflare-r2-public', confidence: 'high', regex: /https:\/\/[a-z0-9][a-z0-9.-]*\.r2\.dev(?:\/[^\s'"`<>\\)]{0,400})?/gi },
+];
 const activeInterceptionByTab = Object.create(null);
 
 const STATIC_FILE_EXTENSIONS = new Set([
@@ -86,6 +137,12 @@ function isRequestStaticResource(req) {
   return isStaticOrFrameworkResource(req.url);
 }
 
+function isExtensionRequest(url, initiator) {
+  const u = (url || '').trim().toLowerCase();
+  const i = (initiator || '').trim().toLowerCase();
+  return u.startsWith('chrome-extension://') || i.startsWith('chrome-extension://');
+}
+
 function safeStringify(value) {
   try { return JSON.stringify(value); } catch (_) {}
   try { return String(value); } catch (_) {}
@@ -113,6 +170,9 @@ function sanitizeRequestForMemory(req) {
     headers: Array.isArray(req.headers) ? req.headers : [],
     body: normalizePayloadText(req.body, MAX_CAPTURED_BODY_CHARS),
     responseBody: normalizePayloadText(req.responseBody, MAX_CAPTURED_RESPONSE_CHARS),
+    responseHeaders: Array.isArray(req.responseHeaders) ? req.responseHeaders : [],
+    statusCode: Number.isFinite(req.statusCode) ? req.statusCode : null,
+    statusLine: req.statusLine || '',
     timestamp: req.timestamp || new Date().toISOString(),
     type: req.type || 'fetch',
     tabId: req.tabId != null ? req.tabId : -1,
@@ -151,6 +211,12 @@ function pushUniqueLimited(list, value, maxSize) {
   }
 }
 
+function ensureHttpsUrl(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`;
+}
+
 function hasLikelyStaticExtension(pathOrUrl) {
   if (!pathOrUrl) return false;
   let pathname = String(pathOrUrl);
@@ -187,7 +253,7 @@ function resolveEndpointUrl(rawUrl, scriptUrl, pageUrl) {
   if (!value || value.includes('${')) return null;
 
   try {
-    if (/^https?:\/\//i.test(value)) return new URL(value).href;
+    if (/^(?:https?|wss?):\/\//i.test(value)) return new URL(value).href;
   } catch (_) {}
 
   if (value.startsWith('//')) {
@@ -233,6 +299,56 @@ function extractSnippetAt(source, index) {
     snippet = snippet.slice(0, ACTIVE_INTERCEPTION_MAX_ENDPOINT_SNIPPET_CHARS) + '...';
   }
   return snippet;
+}
+
+function extractContextSnippet(source, index, radius) {
+  if (!source || typeof source !== 'string') return '';
+  const at = Number(index);
+  if (!Number.isFinite(at) || at < 0) return '';
+  const lines = source.split(/\r?\n/);
+  let lineNum = 1;
+  let pos = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const lineLen = lines[i].length + (i < lines.length - 1 ? 1 : 0);
+    if (at < pos + lineLen) {
+      lineNum = i + 1;
+      break;
+    }
+    pos += lineLen;
+  }
+  const from = Math.max(1, lineNum - radius);
+  const to = Math.min(lines.length, lineNum + radius);
+  return lines.slice(from - 1, to).map((line, idx) => {
+    const num = from + idx;
+    return `${String(num).padStart(5, ' ')} | ${line}`;
+  }).join('\n');
+}
+
+function cleanMatchedEndpointValue(rawValue) {
+  let value = String(rawValue || '').trim();
+  if (!value) return '';
+  value = value.replace(/^[({[\s]+/, '');
+  value = value.replace(/[)\]},;]+$/, '');
+  return value.trim();
+}
+
+function collectDbServiceCandidates(source, pushCandidate) {
+  if (!source || typeof source !== 'string' || typeof pushCandidate !== 'function') return;
+  ACTIVE_INTERCEPTION_DB_SIGNATURES.forEach(signature => {
+    if (!signature || !(signature.regex instanceof RegExp)) return;
+    signature.regex.lastIndex = 0;
+    let match;
+    while ((match = signature.regex.exec(source)) !== null) {
+      const rawValue = signature.captureGroup != null ? match[signature.captureGroup] : match[0];
+      let candidateValue = cleanMatchedEndpointValue(rawValue);
+      if (!candidateValue) continue;
+      if (typeof signature.normalize === 'function') {
+        candidateValue = cleanMatchedEndpointValue(signature.normalize(candidateValue));
+      }
+      if (!candidateValue) continue;
+      pushCandidate(candidateValue, signature.method || 'GET', signature.matcher, signature.confidence || 'high', match.index, true);
+    }
+  });
 }
 
 function normalizeMethod(value, fallback) {
@@ -284,6 +400,7 @@ function buildEndpointCandidatesFromScript(sourceText, meta) {
       matcher,
       confidence: confidence || 'medium',
       snippet: extractSnippetAt(source, index),
+      contextSnippet: extractContextSnippet(source, index, 10),
       dynamic: String(rawUrl).includes('${') || resolvedUrl == null,
     });
   }
@@ -312,6 +429,8 @@ function buildEndpointCandidatesFromScript(sourceText, meta) {
   while ((match = xhrRegex.exec(source)) !== null) {
     pushCandidate(match[4], match[2], 'xhr.open()', 'high', match.index, true);
   }
+
+  collectDbServiceCandidates(source, pushCandidate);
 
   const genericUrlRegex = /(['"`])((?:https?:\/\/|\/)[^'"`\s]{3,500})\1/g;
   while ((match = genericUrlRegex.exec(source)) !== null) {
@@ -359,6 +478,7 @@ function upsertActiveEndpoint(state, candidate, meta) {
       occurrences: 1,
       dynamic: candidate.dynamic === true,
       snippet: candidate.snippet || '',
+      contextSnippet: candidate.contextSnippet || '',
       sourceScripts: sourceScript ? [sourceScript] : [],
     };
     return;
@@ -371,6 +491,7 @@ function upsertActiveEndpoint(state, candidate, meta) {
     existing.url = candidate.resolvedUrl;
   }
   if (candidate.snippet && !existing.snippet) existing.snippet = candidate.snippet;
+  if (candidate.contextSnippet && !existing.contextSnippet) existing.contextSnippet = candidate.contextSnippet;
   if (candidate.confidence === 'high') existing.confidence = 'high';
   pushUniqueLimited(existing.methodsSeen, method, 8);
   pushUniqueLimited(existing.matchers, candidate.matcher || 'unknown', 8);
@@ -428,31 +549,39 @@ function getActiveInterceptionDataForTab(tabId) {
   if (!state) {
     return {
       entries: [],
-      stats: { scriptsScanned: 0, endpointCount: 0, endpointHits: 0, updatedAt: null },
+      stats: { scriptsScanned: 0, storageDbCount: 0, endpointCount: 0, endpointHits: 0, updatedAt: null },
     };
   }
   const entries = Object.values(state.endpointsByKey)
     .sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime())
-    .map(item => ({
-      key: item.key,
-      url: item.url,
-      rawUrl: item.rawUrl,
-      method: item.method,
-      methodsSeen: Array.isArray(item.methodsSeen) ? item.methodsSeen.slice(0, 8) : [item.method],
-      confidence: item.confidence || 'medium',
-      matcher: item.matcher || 'unknown',
-      matchers: Array.isArray(item.matchers) ? item.matchers.slice(0, 8) : [item.matcher || 'unknown'],
-      firstSeen: item.firstSeen,
-      lastSeen: item.lastSeen,
-      occurrences: item.occurrences || 1,
-      dynamic: item.dynamic === true,
-      snippet: item.snippet || '',
-      sourceScripts: Array.isArray(item.sourceScripts) ? item.sourceScripts.slice(0, ACTIVE_INTERCEPTION_MAX_SOURCES_PER_ENDPOINT) : [],
-    }));
+    .map(item => {
+      const matchers = Array.isArray(item.matchers) ? item.matchers : [item.matcher || 'unknown'];
+      const isDb = matchers.some(m => String(m || '').toLowerCase().startsWith('db.'));
+      return {
+        key: item.key,
+        url: item.url,
+        rawUrl: item.rawUrl,
+        method: item.method,
+        methodsSeen: Array.isArray(item.methodsSeen) ? item.methodsSeen.slice(0, 8) : [item.method],
+        confidence: item.confidence || 'medium',
+        matcher: item.matcher || 'unknown',
+        matchers: matchers.slice(0, 8),
+        firstSeen: item.firstSeen,
+        lastSeen: item.lastSeen,
+        occurrences: item.occurrences || 1,
+        dynamic: item.dynamic === true,
+        snippet: item.snippet || '',
+        contextSnippet: item.contextSnippet || '',
+        sourceScripts: Array.isArray(item.sourceScripts) ? item.sourceScripts.slice(0, ACTIVE_INTERCEPTION_MAX_SOURCES_PER_ENDPOINT) : [],
+        isDb,
+      };
+    });
+  const storageDbCount = entries.filter(e => e.isDb).length;
   return {
     entries,
     stats: {
       scriptsScanned: state.scriptsScanned || 0,
+      storageDbCount,
       endpointCount: entries.length,
       endpointHits: state.endpointHits || 0,
       updatedAt: state.updatedAt || null,
@@ -499,7 +628,10 @@ function buildRequestsForPopup() {
     try { return encoder.encode(JSON.stringify({ requests: arr })).length; } catch (_) { return Number.MAX_SAFE_INTEGER; }
   };
 
-  let payload = capturedRequests.map(r => sanitizeRequestForMemory(r)).filter(Boolean);
+  let payload = capturedRequests
+    .filter(r => !isExtensionRequest(r.url, r.initiator))
+    .map(r => sanitizeRequestForMemory(r))
+    .filter(Boolean);
   if (hideStaticResourcesEnabled) {
     payload = payload.filter(r => !r.isStaticResource);
   }
@@ -531,9 +663,65 @@ function buildRequestsForPopup() {
   return payload.length ? [payload[0]] : [];
 }
 
+function requestMatchesBugScope(req, tabId, hostname, pageUrl) {
+  if (!req || typeof req !== 'object') return false;
+  const numericTabId = Number(tabId);
+  const targetHost = String(hostname || '').toLowerCase();
+  const comparableUrl = normalizeEndpointKey(pageUrl || '');
+
+  if (Number.isFinite(numericTabId) && numericTabId >= 0 && req.tabId === numericTabId) {
+    if (!targetHost) return true;
+    try { if (new URL(req.url).hostname.toLowerCase() === targetHost) return true; } catch {}
+    try { if (new URL(req.initiator).hostname.toLowerCase() === targetHost) return true; } catch {}
+    if (comparableUrl && normalizeEndpointKey(req.url) === comparableUrl) return true;
+  }
+
+  if (!targetHost) return false;
+  try { if (new URL(req.url).hostname.toLowerCase() === targetHost) return true; } catch {}
+  try { if (new URL(req.initiator).hostname.toLowerCase() === targetHost) return true; } catch {}
+  return false;
+}
+
+function buildRequestsForBugAnalysis(tabId, hostname, pageUrl) {
+  const encoder = new TextEncoder();
+  const sizeOf = (arr) => {
+    try { return encoder.encode(JSON.stringify({ requests: arr })).length; } catch (_) { return Number.MAX_SAFE_INTEGER; }
+  };
+
+  let payload = capturedRequests
+    .filter(r => !isExtensionRequest(r.url, r.initiator))
+    .filter(r => requestMatchesBugScope(r, tabId, hostname, pageUrl))
+    .map(r => sanitizeRequestForMemory(r))
+    .filter(Boolean);
+
+  if (sizeOf(payload) <= MAX_POPUP_MESSAGE_BYTES) return payload;
+
+  payload = payload.map(r => {
+    if (r.type === 'document') return r;
+    return { ...r, responseBody: null };
+  });
+  if (sizeOf(payload) <= MAX_POPUP_MESSAGE_BYTES) return payload;
+
+  payload = payload.map(r => ({ ...r, responseBody: null }));
+  if (sizeOf(payload) <= MAX_POPUP_MESSAGE_BYTES) return payload;
+
+  payload = payload.map(r => ({ ...r, body: null, responseHeaders: Array.isArray(r.responseHeaders) ? r.responseHeaders.slice(0, 30) : [] }));
+  if (sizeOf(payload) <= MAX_POPUP_MESSAGE_BYTES) return payload;
+
+  let end = payload.length;
+  while (end > 1) {
+    end = Math.floor(end * 0.75);
+    const sliced = payload.slice(0, end);
+    if (sizeOf(sliced) <= MAX_POPUP_MESSAGE_BYTES) return sliced;
+  }
+
+  return payload.length ? [payload[0]] : [];
+}
+
 function countRequestsForCurrentSite() {
   if (!currentTabHostname) return 0;
   return capturedRequests.filter(req => {
+    if (isExtensionRequest(req.url, req.initiator)) return false;
     if (hideStaticResourcesEnabled && isRequestStaticResource(req)) return false;
     if (req.initiator) {
       try { if (new URL(req.initiator).hostname === currentTabHostname) return true; } catch {}
@@ -627,7 +815,7 @@ function decodeRequestBody(requestBody) {
 const REQUEST_FILTER = { urls: ["<all_urls>"] };
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
-    if (details.initiator && details.initiator.startsWith('chrome-extension://')) return;
+    if (isExtensionRequest(details.url, details.initiator)) return;
     const isStaticResource = isStaticOrFrameworkResource(details.url);
 
     pendingRequests[details.requestId] = {
@@ -637,8 +825,11 @@ chrome.webRequest.onBeforeRequest.addListener(
       resourceType: details.type || 'other',
       timestamp: new Date(details.timeStamp).toISOString(),
       headers: [],
+      responseHeaders: [],
       body: normalizePayloadText(decodeRequestBody(details.requestBody), MAX_CAPTURED_BODY_CHARS),
       responseBody: null,
+      statusCode: null,
+      statusLine: '',
       initiator: details.initiator || '',
       isStaticResource,
     };
@@ -658,10 +849,26 @@ chrome.webRequest.onSendHeaders.addListener(
   ["requestHeaders", "extraHeaders"]
 );
 
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    const pending = pendingRequests[details.requestId];
+    if (pending) {
+      pending.responseHeaders = details.responseHeaders || [];
+      pending.statusCode = Number.isFinite(details.statusCode) ? details.statusCode : pending.statusCode;
+      pending.statusLine = details.statusLine || pending.statusLine || '';
+    }
+  },
+  REQUEST_FILTER,
+  ["responseHeaders", "extraHeaders"]
+);
+
 chrome.webRequest.onCompleted.addListener(
   (details) => {
     const pending = pendingRequests[details.requestId];
     if (!pending) return;
+
+    if (Number.isFinite(details.statusCode)) pending.statusCode = details.statusCode;
+    if (details.statusLine) pending.statusLine = details.statusLine;
 
     const resBody = findBufferedData(responseBuffer, pending.url, pending.method);
     if (resBody !== null) {
@@ -702,6 +909,8 @@ function finalizeRequest(requestId) {
   if (!pending) return;
   delete pendingRequests[requestId];
 
+  if (isExtensionRequest(pending.url, pending.initiator)) return;
+
   const isDuplicate = capturedRequests.some(r =>
     r.url === pending.url &&
     r.method === pending.method &&
@@ -718,6 +927,9 @@ function finalizeRequest(requestId) {
     headers: pending.headers,
     body: normalizePayloadText(pending.body, MAX_CAPTURED_BODY_CHARS),
     responseBody: normalizePayloadText(pending.responseBody, MAX_CAPTURED_RESPONSE_CHARS),
+    responseHeaders: Array.isArray(pending.responseHeaders) ? pending.responseHeaders : [],
+    statusCode: Number.isFinite(pending.statusCode) ? pending.statusCode : null,
+    statusLine: pending.statusLine || '',
     timestamp: pending.timestamp,
     type: displayType,
     tabId: pending.tabId,
@@ -770,7 +982,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   } else if (message.action === 'captureBody') {
     const data = message.data;
-    if (data && data.url) {
+    if (data && data.url && !isExtensionRequest(data.url, data.initiator)) {
       const upperMethod = (data.method || '').toUpperCase();
       const matchId = Object.keys(pendingRequests).reverse().find(id => {
         const r = pendingRequests[id];
@@ -787,7 +999,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   } else if (message.action === 'captureResponse') {
     const data = message.data;
-    if (data && data.url) {
+    if (data && data.url && !isExtensionRequest(data.url, data.initiator)) {
       const upperMethod = (data.method || '').toUpperCase();
       
       const matchId = Object.keys(pendingRequests).reverse().find(id => {
@@ -815,8 +1027,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   } else if (message.action === 'captureDocumentContent') {
     const data = message.data;
-    if (data && data.url && data.responseBody != null) {
-      const normalized = normalizePayloadText(data.responseBody, MAX_CAPTURED_RESPONSE_CHARS);
+    if (data && data.url && data.responseBody != null && !isExtensionRequest(data.url, data.initiator)) {
+      const normalized = normalizePayloadText(data.responseBody, MAX_CAPTURED_DOCUMENT_CHARS);
       const docRequest = capturedRequests.find(r =>
         r.type === 'document' && r.url === data.url && r.responseBody == null
       );
@@ -829,6 +1041,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   } else if (message.action === 'getRequests') {
     sendResponse({ requests: buildRequestsForPopup() });
+
+  } else if (message.action === 'getRequestsForBugAnalysis') {
+    sendResponse({
+      requests: buildRequestsForBugAnalysis(message.tabId, message.hostname, message.pageUrl)
+    });
 
   } else if (message.action === 'getHideStaticResources') {
     sendResponse({ enabled: hideStaticResourcesEnabled });
@@ -848,12 +1065,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
 
   } else if (message.action === 'getRequestsForExport') {
-    sendResponse({ requests: capturedRequests.map(r => sanitizeRequestForMemory(r)).filter(Boolean) });
+    sendResponse({ requests: capturedRequests.filter(r => !isExtensionRequest(r.url, r.initiator)).map(r => sanitizeRequestForMemory(r)).filter(Boolean) });
 
   } else if (message.action === 'importHistory') {
     const list = message.requests;
     if (Array.isArray(list) && list.length > 0) {
       capturedRequests = list
+        .filter(r => !isExtensionRequest(r && r.url, r && r.initiator))
         .map(r => sanitizeRequestForMemory(r))
         .filter(Boolean)
         .slice(0, MAX_REQUESTS);
